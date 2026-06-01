@@ -1,0 +1,17 @@
+# Hermes Pet Win - Dependencies
+# Zero system-level dependencies: no Node.js, no Electron — pure Python.
+
+# Core
+openai>=1.0.0
+
+# UI Framework
+PySide6>=6.6.0
+
+# Pixel Pet (PIL sprite generation)
+Pillow>=10.0.0
+
+# Global Hotkeys
+keyboard>=0.13.5
+
+# Testing
+pytest>=7.0.0

@@ -1,0 +1,192 @@
+"""
+Hermes Pet Win — Main Entry Point (PySide6)
+
+Windows 桌面 AI 伴侣 — 灵动岛 + 像素宠物 + AI 聊天 + 命令执行
+"""
+import sys
+import os
+import io
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+
+from config import load_user_config
+from bridge import AIBridge
+from engine.command_engine import CommandEngine
+from ui.launcher import LauncherDialog
+from ui.chat_window import ChatWindow
+from ui.dynamic_island import DynamicIsland
+from ui.pixel_pet import PixelPet
+from ui.tray import SystemTray
+from theme import get_stylesheet
+
+
+class HermesPetApp:
+    """Hermes Pet Win 主应用 (PySide6)"""
+
+    def __init__(self):
+        self.app = QApplication(sys.argv)
+        self.app.setQuitOnLastWindowClosed(True)  # close chat → quit app
+        self.app.setStyleSheet(get_stylesheet())
+
+        self.bridge = None
+        self.command_engine = None
+        self.chat = None
+        self.island = None
+        self.pet = None
+        self.tray = None
+        self._keyboard_registered = False
+
+    def run(self):
+        """Run the application."""
+        # Step 1: Show launcher
+        launcher = LauncherDialog()
+        # Center on the primary screen so the user always finds it.
+        scr = self.app.primaryScreen().availableGeometry()
+        launcher.move(
+            scr.x() + (scr.width() - launcher.width()) // 2,
+            scr.y() + (scr.height() - launcher.height()) // 2,
+        )
+        if launcher.exec() != LauncherDialog.DialogCode.Accepted:
+            return
+
+        user_config = launcher.result_config
+
+        # Step 2: Create bridge (AI + EventEngine)
+        self.bridge = AIBridge(user_config)
+        self.command_engine = CommandEngine(self.bridge.event_engine)
+
+        # Step 3: Initialize UI components
+        if user_config.get("chat_enabled", True):
+            self.chat = ChatWindow(self.bridge)
+            # Wire command engine to chat — connects BEFORE chat's own _on_done
+            # so commands are processed first, then the send button re-enables.
+            self.bridge.stream_done.connect(self._process_commands)
+
+        if user_config.get("island_enabled", True):
+            self.island = DynamicIsland(on_click=self._toggle_chat)
+            self.island.show()
+
+        if user_config.get("pet_enabled", True):
+            self.pet = PixelPet(on_double_click=self._toggle_chat)
+            self.pet.pet_name = user_config.get("pet_name", "小橘")
+            self.pet.name_label.setText(self.pet.pet_name)
+            self.pet.show()
+            self.pet.say(f"Hi! 我是{self.pet.pet_name}~", 5000)
+
+        # Step 4: System tray
+        self.tray = SystemTray(
+            on_toggle_chat=self._toggle_chat,
+            on_quit=self._quit,
+        )
+        self.tray.show()
+
+        # Step 5: Global hotkeys
+        self._setup_hotkeys()
+
+        # Step 6: Connect state changes to island, tray, and pet
+        self.bridge.state_changed.connect(self._on_state_change)
+
+        # Show chat by default
+        if self.chat:
+            scr = self.app.primaryScreen().availableGeometry()
+            self.chat.move(
+                scr.x() + (scr.width() - self.chat.width()) // 2,
+                scr.y() + (scr.height() - self.chat.height()) // 2,
+            )
+            self.chat.show()
+            if self.tray:
+                self.tray.set_chat_visible(True)
+
+        print(f"\n{'='*55}")
+        print(f"  Hermes Pet Win")
+        print(f"  Backend: {self.bridge.backend.get_name()}")
+        print(f"  Hotkey: Ctrl+Shift+H")
+        print(f"{'='*55}\n")
+
+        self.app.exec()
+
+    def _toggle_chat(self):
+        if self.chat:
+            self.chat.toggle_visibility()
+            if self.tray:
+                self.tray.set_chat_visible(self.chat.isVisible())
+            if self.chat.isVisible() and self.pet:
+                self.pet.set_state("happy")
+                self.pet.say("来聊天啦~", 2000)
+
+    def _on_state_change(self, state, preview=""):
+        if self.island:
+            self.island.set_state(state, preview)
+        if self.tray:
+            self.tray.update_state(state, preview)
+        if self.pet:
+            if state == "thinking":
+                self.pet.say("思考中...", 3000)
+            elif state == "idle" and preview:
+                self.pet.set_state("happy")
+                self.pet.say("搞定!", 2000)
+
+    def _process_commands(self, full_text):
+        """Parse AI response for command tags and execute them."""
+        if not self.command_engine:
+            return
+
+        results = self.command_engine.parse_and_execute(full_text)
+        for result in results:
+            if self.chat:
+                self.chat.append_command_result(
+                    result.command,
+                    result.success,
+                    result.output if result.success else result.error,
+                )
+
+    def _setup_hotkeys(self):
+        """Register global hotkeys with error handling."""
+        try:
+            import keyboard
+            keyboard.add_hotkey("ctrl+shift+h", self._toggle_chat)
+            self._keyboard_registered = True
+        except ImportError:
+            print("keyboard module not available — hotkeys disabled")
+        except Exception as e:
+            print(f"Hotkey setup failed: {e}")
+
+    def _quit(self):
+        """Clean up keyboard hooks, tray, and app, then exit."""
+        # Unhook keyboard first so no stale callbacks fire during teardown
+        if self._keyboard_registered:
+            try:
+                import keyboard
+                keyboard.unhook_all()
+            except Exception:
+                pass
+            self._keyboard_registered = False
+
+        if self.tray:
+            try:
+                self.tray.hide()
+            except Exception:
+                pass
+
+        if self.bridge:
+            try:
+                self.bridge.cancel()
+            except Exception:
+                pass
+
+        self.app.quit()
+
+
+def main():
+    app = HermesPetApp()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
