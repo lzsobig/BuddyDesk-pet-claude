@@ -88,6 +88,28 @@ class _Mascot(QLabel):
         self._float.setEndValue(self.pos())
 
 
+
+class _LightComboBox(QComboBox):
+    """QComboBox that forces light dropdown on Windows dark mode."""
+    def showPopup(self):
+        super().showPopup()
+        view = self.view()
+        if view:
+            from PySide6.QtGui import QPalette, QColor
+            pal = QPalette()
+            pal.setColor(QPalette.ColorRole.Window, QColor("#ffffff"))
+            pal.setColor(QPalette.ColorRole.WindowText, QColor("#2a2a28"))
+            pal.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+            pal.setColor(QPalette.ColorRole.Text, QColor("#2a2a28"))
+            pal.setColor(QPalette.ColorRole.Highlight, QColor("rgba(92,184,154,0.15)"))
+            pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#5cb89a"))
+            view.setPalette(pal)
+            vp = view.viewport()
+            if vp:
+                vp.setPalette(pal)
+                vp.setAutoFillBackground(True)
+
+
 class _BackendCard(QFrame):
     """A clickable card representing one AI backend option.
 
@@ -233,7 +255,16 @@ class _BackendCard(QFrame):
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self._radio.setChecked(True)
+            # Press feedback: subtle background shift
+            self.setStyleSheet(
+                f"QFrame {{ background: {ACCENT_SOFT}; border: 1.5px solid {ACCENT}; border-radius: 16px; }}"
+            )
         super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        # Restore selection style after press
+        self._apply_style(selected=self._radio.isChecked())
+        super().mouseReleaseEvent(e)
 
 
 class _InputField(QFrame):
@@ -364,6 +395,18 @@ class LauncherDialog(QDialog):
         content_layout.addWidget(sub)
         content_layout.addSpacing(28)
 
+        # Decorative divider
+        divider_row = QHBoxLayout()
+        divider_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _dl1 = QFrame(); _dl1.setFixedWidth(40); _dl1.setFixedHeight(1)
+        _dl1.setStyleSheet(f"background:{BORDER};border:none;")
+        _dd = QLabel("·"); _dd.setStyleSheet(f"color:{ACCENT};font-size:8px;background:transparent;border:none;")
+        _dl2 = QFrame(); _dl2.setFixedWidth(40); _dl2.setFixedHeight(1)
+        _dl2.setStyleSheet(f"background:{BORDER};border:none;")
+        divider_row.addWidget(_dl1); divider_row.addWidget(_dd); divider_row.addWidget(_dl2)
+        content_layout.addLayout(divider_row)
+        content_layout.addSpacing(12)
+
         # Scrollable form
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -427,7 +470,7 @@ class LauncherDialog(QDialog):
         cf.setSpacing(10)
 
         cf.addWidget(self._field_label("API 平台预设"))
-        self.preset_combo = QComboBox()
+        self.preset_combo = _LightComboBox()
         self.preset_combo.addItems(API_PRESETS.keys())
         self.preset_combo.currentTextChanged.connect(self._on_preset)
         cf.addWidget(self.preset_combo)

@@ -179,13 +179,13 @@ def get_stylesheet() -> str:
         width: 24px;
     }}
     QComboBox QAbstractItemView {{
-        background-color: {BG_CARD};
-        color: {TEXT_PRIMARY};
-        selection-background-color: {ACCENT_SOFT};
-        selection-color: {ACCENT};
-        border: 1px solid {BORDER};
-        border-radius: {RADIUS_SM}px;
+        background-color: {BG_CARD} !important;
+        color: {TEXT_PRIMARY} !important;
+        selection-background-color: {ACCENT_SOFT} !important;
+        selection-color: {ACCENT} !important;
+        border: 1px solid {BORDER} !important;
         outline: 0;
+        border-radius: {RADIUS_SM}px;
     }}
 
     /* ── Radio buttons (drawn as 20x20 circles) ── */
