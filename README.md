@@ -1,211 +1,138 @@
 <p align="center">
-  <img src="assets/cat_frames_v2/preview_idle.png" width="100" alt="BuddyDesk">
+  <img src="docs/images/cat_idle.png" width="100" alt="BuddyDesk">
 </p>
 
 <h1 align="center">BuddyDesk</h1>
 
 <p align="center">
-  <strong>Windows 桌面 AI 伴侣</strong><br>
-  灵动岛 · 像素橘猫 · 自然语言命令执行 · Claude Code 集成
+  <strong>你的桌面 AI 伴侣</strong><br>
+  快捷键一按，AI 即来；说完就走，不打扰工作。
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/PySide6-Qt_for_Python-41CD52?style=flat-square&logo=qt&logoColor=white" alt="PySide6">
-  <img src="https://img.shields.io/badge/License-MIT-5CB89A?style=flat-square" alt="MIT">
   <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows">
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/License-MIT-5CB89A?style=flat-square" alt="MIT">
 </p>
+
+---
+
+## 这是什么？
+
+BuddyDesk 是一个住在你桌面上的 AI 助手。
+
+它不是浏览器里的聊天框，也不是任务栏里的图标——它是一只**像素橘猫**，安静地待在你的桌面上。按 `Ctrl+Shift+H`，AI 灵动岛出现；对它说话，它帮你做事。
+
+说"打开微信"，微信就打开。说"查看 IP"，结果直接给你。说"帮我写个贪吃蛇"，它调用 Claude Code 真的写一个出来。
 
 <p align="center">
-  快捷键一按，AI 即来。<br>
-  说"打开微信"就能打开，说"查看IP"就能执行。<br>
-  纯 Python，零 Electron，零 Node.js。
+  <img src="docs/images/launcher.png" width="500" alt="启动界面">
 </p>
+
+---
+
+## 它能做什么？
+
+### 快捷键一按，AI 即来
+
+不用打开浏览器，不用切换窗口。按一个快捷键，聊天窗口瞬间出现。说完就走，不打扰你的工作流。
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> · <a href="#features">Features</a> · <a href="#architecture">Architecture</a> · <a href="#roadmap">Roadmap</a>
+  <img src="docs/images/island_thinking.png" width="400" alt="灵动岛 - 思考中">
 </p>
 
----
+### 说人话，它就懂
 
-## Why BuddyDesk
+不需要学习命令行，不需要写代码。用自然语言告诉它你想做什么，它来执行。
 
-> AI 工具界有个不成文的规则：越专业，界面越严肃。
-> 但当你面对一只像素橘猫的时候，你不会觉得"这个问题太蠢了不好意思问"。
+<p align="center">
+  <img src="docs/images/chat_commands.png" width="500" alt="自然语言命令执行">
+</p>
 
-BuddyDesk 不是另一个聊天框。它住在你的桌面上 —— 顶部有灵动岛，角落有像素猫，快捷键一按就来，说完就走。
+- **"打开微信"** → 直接启动微信
+- **"打开记事本"** → 启动记事本
+- **"查看 IP 地址"** → 执行 ipconfig 并给你结果
+- **"帮我写一个贪吃蛇"** → 调用 Claude Code 生成代码
 
----
+### 像素橘猫，陪你工作
 
-## Features
+一只 128px 的像素猫住在你的桌面上。它会走来走去、会打瞌睡、会开心地跳。你可以拖拽它，双击它打开聊天。
 
-<h3>🏝️ Dynamic Island</h3>
+<p align="center">
+  <img src="docs/images/cat_idle.png" width="120" alt="像素猫 - 待机">
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/images/cat_happy.png" width="120" alt="像素猫 - 开心">
+</p>
 
-屏幕顶部的浮动胶囊，5 种状态实时反馈：
+### AI 不只是聊天，它能动手
 
-`idle` · `thinking` · `result` · `notify` · `error`
-
-All-Paint 架构 — 所有动画在 `paintEvent` 中绘制，零子控件，`QPainterPath` 抗锯齿。悬停展开预览，点击打开聊天。
-
-<h3>🐱 Pixel Pet</h3>
-
-一只 128px 像素橘猫陪你工作。7 种状态，72 帧精灵图：
-
-| State | Description |
-|-------|-------------|
-| `idle` | 静静待着 |
-| `walk` | 桌面闲逛，自动转向 |
-| `happy` | 开心跳动 |
-| `sleep` | 打瞌睡，ZZZ 飘浮 |
-| `love` | 冒爱心 |
-| `thinking` | 跟着 AI 一起思考 |
-| `error` | 出错时心疼你 |
-
-拖拽移动，双击打开聊天。
-
-<h3>⚡ Command Execution</h3>
-
-AI 不只是聊天，**能直接操作你的电脑**：
-
-```
-你: 打开微信
-AI: 好的，帮你打开微信~ [APP:微信]
-   已打开: 微信
-
-你: 查看 IP 地址
-AI: 正在查询... [SHELL:ipconfig]
-   IPv4: 192.168.1.xxx
-
-你: 帮我写一个贪吃蛇
-AI: 让 Claude Code 来帮你！ [CLAUDE:创建贪吃蛇游戏]
-   snake_game.py 已创建
-```
-
-引擎自动解析回复中的标签并执行：`[APP:xxx]` 启动应用、`[SHELL:xxx]` 执行命令、`[CLAUDE:xxx]` 调用 Claude Code。
-
-<h3>💬 Multi-Conversation</h3>
-
-多对话标签栏 — 新建、切换、关闭。自动从首条消息生成标题，关闭时保存，启动时恢复。
-
-<h3>🤖 Claude Code Integration</h3>
-
-本地安装了 Claude Code CLI？**零配置，打开就用。** 编程、重构、项目创建，一句话搞定。
-
-<h3>🔌 Multi-Backend</h3>
-
-DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 API Key，选个模型，开聊。
+| 你说 | 它做 |
+|------|------|
+| "打开微信" | 启动微信 |
+| "查看 IP 地址" | 执行 `ipconfig`，告诉你结果 |
+| "帮我写贪吃蛇" | 调用 Claude Code 生成 `snake_game.py` |
+| "今天天气怎么样" | 查询天气并回答 |
 
 ---
 
-## Quick Start
+## 安装（30 秒）
 
-<details open>
-<summary><b>One-Click Launch</b> (recommended)</summary>
-
-<br>
-
-双击 `启动 BuddyDesk.bat` — 自动检测 Python、安装依赖、启动应用。
-
-静默版（无命令行窗口）：双击 `启动 BuddyDesk.vbs`
-
-</details>
-
-<details>
-<summary><b>Manual Setup</b></summary>
+**第一步：下载**
 
 ```bash
-git clone https://github.com/lzsobig/BuddyDesk-pet-win.git
-cd BuddyDesk-pet-win
-pip install -r requirements.txt
-python main.py
+git clone https://github.com/lzsobig/BuddyDesk-pet-claude.git
+cd BuddyDesk-pet-claude
 ```
 
-</details>
+**第二步：双击启动**
 
-<details>
-<summary><b>AI Backend</b></summary>
+- 双击 `启动 BuddyDesk.bat` → 自动检测 Python、安装依赖、启动
+- 或双击 `启动 BuddyDesk.vbs` → 同上，无黑色命令行窗口
 
-**Claude Code** — Install [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), select "Claude Code" on launch. Done.
+**第三步：选择 AI 后端**
 
-**OpenAI API** — Paste API key, choose a platform:
-
-| Platform | Base URL |
-|----------|----------|
-| OpenAI | `https://api.openai.com/v1` |
-| DeepSeek | `https://api.deepseek.com/v1` |
-| NVIDIA | `https://integrate.api.nvidia.com/v1` |
-| SiliconFlow | `https://api.siliconflow.cn/v1` |
-| Moonshot | `https://api.moonshot.cn/v1` |
-| Ollama | `http://localhost:11434/v1` |
-
-</details>
+| 后端 | 说明 | 配置难度 |
+|------|------|----------|
+| **Claude Code** | 已安装 Claude Code CLI 的话，零配置直接用 | ⭐ 最简单 |
+| **DeepSeek** | 填一个 API Key | ⭐⭐ |
+| **OpenAI / Ollama** | 其他平台都支持 | ⭐⭐ |
 
 ---
 
-## Controls
+## 快捷键
 
-| Action | Effect |
-|--------|--------|
-| `Ctrl+F` | Toggle chat window |
-| Click island | Open chat |
-| Double-click pet | Open chat |
-| Drag pet | Move position |
-| Hover island | Preview state |
-| "打开XXX" | Launch app |
-| "查看XXX" | Run command |
-| "帮我XXX" | Claude Code task |
+| 操作 | 效果 |
+|------|------|
+| `Ctrl+Shift+H` | 呼出 / 隐藏 AI |
+| `Ctrl+F` | 切换聊天窗口 |
+| 点击灵动岛 | 打开聊天 |
+| 双击像素猫 | 打开聊天 |
+| 拖拽像素猫 | 移动位置 |
 
 ---
 
-## Architecture
+## 系统要求
 
-```
-┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-│  User Input │────▶│  ChatWindow  │────▶│   AIBridge    │
-└─────────────┘     └──────────────┘     └───────┬───────┘
-                                                  │
-                    ┌──────────────┐              │ Thread
-                    │ CommandEngine│◀─────────────┤
-                    └──────┬───────┘              │
-                           │                      ▼
-                    ┌──────▼───────┐     ┌───────────────┐
-                    │  [APP:xxx]   │     │  AI Backend   │
-                    │  [SHELL:xxx] │     │  Claude/OpenAI│
-                    │  [CLAUDE:xxx]│     └───────────────┘
-                    └──────────────┘
-```
-
-| Component | Technology |
-|-----------|-----------|
-| UI Framework | PySide6 (Qt for Python) |
-| Dynamic Island | QPainter All-Paint |
-| Pet Animation | 72-frame sprite sheet |
-| AI Backend | Claude Code CLI / OpenAI API |
-| Hotkey | ctypes GetAsyncKeyState |
-| Config | JSON (`~/.buddydesk/`) |
-| Testing | pytest |
+- Windows 10 / 11
+- Python 3.10 以上（启动脚本会自动安装，你不需要手动装）
 
 ---
 
-## Roadmap
+## 常见问题
 
-| Status | Feature | Description |
-|--------|---------|-------------|
-| ✅ | Dynamic Island | 5-state floating capsule |
-| ✅ | Pixel Pet | 72-frame animated cat |
-| ✅ | Command Execution | Natural language → system action |
-| ✅ | Dual Backend | Claude Code + OpenAI API |
-| ✅ | Multi-Conversation | Tab bar + persistence |
-| ✅ | One-Click Launcher | .bat + .vbs |
-| 🔜 | Plugin System | Community skins & commands |
-| 🔜 | Voice Interaction | Talk to your pet |
-| 🔜 | Pet Learning | Proactive reminders |
-| 🔜 | Cross-Platform | macOS / Linux |
+**Q：它会偷偷执行危险命令吗？**
+不会。三级安全机制：打开应用直接执行，系统命令展示结果，危险操作必须你确认。
+
+**Q：我需要会编程吗？**
+完全不需要。BuddyDesk 就是给普通用户用的。
+
+**Q：数据会上传吗？**
+AI 后端由你选择。Claude Code 走 Anthropic API，OpenAI 模式走你自己的 API Key，本地 Ollama 完全离线。
 
 ---
 
 <p align="center">
-  <img src="assets/cat_frames_v2/preview_wave.png" width="80" alt="wave">
+  <img src="docs/images/cat_happy.png" width="80" alt="cat">
   <br><br>
   <b>Made with Python and love for pixel cats</b><br>
   <sub>Inspired by <a href="https://github.com/nicepkg/HermesPet">HermesPet</a> for macOS</sub>
