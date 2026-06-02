@@ -121,8 +121,8 @@ AI: 让 Claude Code 来帮你！  [CLAUDE:创建贪吃蛇游戏]
 
 ```bash
 # Clone
-git clone https://github.com/lzsobig/hermes-pet-win.git
-cd hermes-pet-win
+git clone https://github.com/lzsobig/BuddyDesk-pet-win.git
+cd BuddyDesk-pet-win
 
 # Install dependencies
 pip install -r requirements.txt
