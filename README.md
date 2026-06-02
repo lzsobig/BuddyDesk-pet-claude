@@ -100,11 +100,11 @@ DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 AP
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/launcher.png" width="260" alt="启动配置">
+  <img src="docs/images/launcher.png" height="220" alt="启动配置">
   &nbsp;&nbsp;
-  <img src="docs/images/island.png" width="260" alt="灵动岛">
+  <img src="docs/images/island.png" height="220" alt="灵动岛">
   &nbsp;&nbsp;
-  <img src="docs/images/chat.png" width="260" alt="聊天界面">
+  <img src="docs/images/chat.png" height="220" alt="聊天界面">
 </p>
 
 <p align="center">
