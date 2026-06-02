@@ -7,6 +7,17 @@ import sys
 import os
 import io
 
+# Enable per-monitor DPI awareness on Windows for crisp rendering
+if sys.platform == "win32":
+    try:
+        from ctypes import windll
+        windll.shcore.SetProcessDpiAwareness(2)  # Per-Monitor V2
+    except Exception:
+        try:
+            windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
@@ -127,10 +138,14 @@ class HermesPetApp:
             self.tray.update_state(state, preview)
         if self.pet:
             if state == "thinking":
+                self.pet.set_state("think")
                 self.pet.say("思考中...", 3000)
             elif state == "idle" and preview:
                 self.pet.set_state("happy")
                 self.pet.say("搞定!", 2000)
+            elif state == "error":
+                self.pet.set_state("sad")
+                self.pet.say("出错了...", 3000)
 
     def _process_commands(self, full_text):
         """Parse AI response for command tags and execute them."""

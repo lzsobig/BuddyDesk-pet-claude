@@ -67,6 +67,8 @@ STATE_FRAMES: dict[str, list[str]] = {
     "love":     ["frame_24.png", "frame_25.png"],  # 复用 happy 挥手
     "thinking": ["frame_64.png"],          # 静态 review 姿势
     "error":    ["frame_40.png"],          # 静态 fail 表情
+    "sad":      ["frame_40.png", "frame_41.png"],  # 垂头丧气（fail 帧）
+    "think":    ["frame_32.png", "frame_33.png", "frame_34.png", "frame_35.png"],  # 蹦跳思考（jump 帧）
 }
 
 
@@ -379,9 +381,9 @@ class PixelPet(QWidget):
         elif self.state == "love":
             states = ["idle", "idle", "love", "idle"]
         elif self.state == "happy":
-            # 强烈倾向回到 idle: 80% idle → 只有 20% 继续挥手
+            # 挥手 1-2 次后立即回 idle（90% 概率）
             states = ["idle", "idle", "idle", "idle", "idle",
-                      "happy", "happy", "walk", "love", "sleep"]
+                      "idle", "idle", "idle", "walk", "sleep"]
         elif self.state == "thinking":
             states = ["idle", "idle", "thinking", "idle", "walk"]
         elif self.state == "error":

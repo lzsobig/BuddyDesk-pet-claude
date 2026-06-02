@@ -645,9 +645,6 @@ class LauncherDialog(QDialog):
             self.move(e.globalPosition().toPoint() - self._drag_pos)
 
     def _apply_rounded_mask(self):
-        # Use QPainterPath for a single smooth Bézier-rendered rounded rect
-        # mask. The earlier rectangle+ellipse approach left visible seams
-        # where the 4 corner ellipses joined the central rectangles.
         w, h = self.width(), self.height()
         from PySide6.QtGui import QPainterPath, QRegion, QTransform
         from PySide6.QtCore import QRectF

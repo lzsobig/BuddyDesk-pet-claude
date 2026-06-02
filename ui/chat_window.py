@@ -11,6 +11,7 @@ streaming-friendly rendering. User bubbles stay as escaped plain text.
 from __future__ import annotations
 import os
 import re
+import sys
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, Signal, QRectF
@@ -61,12 +62,30 @@ class ChatBaseWindow(QWidget):
             self._fade.stop()
         self.setWindowOpacity(0)
         super().show()
+        self._apply_rounded_mask()  # sync — mask must be set before first paint
         self._fade = QPropertyAnimation(self, b"windowOpacity")
         self._fade.setDuration(self.FADE_MS)
         self._fade.setEasingCurve(QEasingCurve.OutCubic)
         self._fade.setStartValue(0)
         self._fade.setEndValue(1)
         self._fade.start()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        p.setPen(Qt.PenStyle.NoPen)  # no border — avoids setMask clipping jagged edge
+        p.setBrush(QColor(BG_DEEP))
+        p.drawRoundedRect(QRectF(0, 0, float(self.width()), float(self.height())), RADIUS_LG, RADIUS_LG)
+        p.end()
+
+    def _apply_rounded_mask(self):
+        w, h = self.width(), self.height()
+        from PySide6.QtGui import QPainterPath, QRegion, QTransform
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0.0, 0.0, float(w), float(h)), RADIUS_LG, RADIUS_LG)
+        self.setMask(QRegion(path.toFillPolygon(QTransform()).toPolygon()))
 
     def hide(self):
         if not self.isVisible():
@@ -429,18 +448,19 @@ class ChatWindow(ChatBaseWindow):
         self._live_widget: _MessageBubble | None = None
         self._live_text: str = ""
         self._md = MarkdownRenderer()
+        self._conversation_id: str = ""
 
         self.setFixedSize(480, 640)
         self.setWindowTitle("Hermes Pet Chat")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent;")
-        # NO setMask — paintEvent draws the full rounded rect; setMask creates
-        # jagged pixel edges on Windows. WA_TranslucentBackground makes the
-        # rounded corners fully transparent at the OS level.
+        self.installEventFilter(self)
 
         self._build_ui()
         self._wire()
-        self._sys_welcome()
+        self._load_last_conversation()
+        if not self.messages:
+            self._sys_welcome()
 
     # ── UI ──────────────────────────────────────────────────────
     def _build_ui(self):
@@ -524,21 +544,22 @@ class ChatWindow(ChatBaseWindow):
         self._status_dot.setStyleSheet(f"background:{GREEN};border-radius:3px;")
         hl.addWidget(self._status_dot)
 
-        self._status = QLabel("就绪")
+        self._status = QLabel("Ready")
         self._status.setStyleSheet(
             f"color:{GREEN};font-size:11px;font-weight:600;background:transparent;border:none;"
         )
         hl.addWidget(self._status)
 
-        clr = QPushButton("清空")
-        clr.setFixedSize(56, 28)
+        clr = QPushButton("清 空")
+        clr.setFixedSize(64, 28)
         clr.setCursor(Qt.CursorShape.PointingHandCursor)
         clr.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {TEXT_SECONDARY};
-                border: none; border-radius: 6px; font-size: 11px; font-weight: 500;
+                background: rgba(232,229,221,0.5); color: #4a4a46;
+                border: 1px solid rgba(232,229,221,0.8); border-radius: 8px;
+                font-size: 12px; font-weight: 600; padding: 2px 10px;
             }}
-            QPushButton:hover {{ background: {ACCENT_SOFT}; color: {ACCENT}; }}
+            QPushButton:hover {{ background: {ACCENT_SOFT}; color: {ACCENT}; border-color: {ACCENT}; }}
         """)
         clr.clicked.connect(self._clear)
         hl.addWidget(clr)
@@ -660,6 +681,58 @@ class ChatWindow(ChatBaseWindow):
             f"Backend: {self.bridge.backend.get_name()}"
         )
 
+    # ── Conversation persistence ──
+    def _load_last_conversation(self):
+        """Load the most recent conversation from disk."""
+        import config, uuid
+        from datetime import datetime
+        convs = config.load_conversations()
+        if convs:
+            last = convs[-1]
+            self._conversation_id = last.get("id", str(uuid.uuid4()))
+            self.messages = last.get("messages", [])
+            # Re-render saved messages as widgets
+            for msg in self.messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                time_str = msg.get("time", "")
+                if role == "user":
+                    self._append_widget(_MessageBubble("user", content, time_str, renderer=self._md))
+                elif role == "assistant":
+                    self._append_widget(_MessageBubble("ai", content, time_str, renderer=self._md))
+        else:
+            self._conversation_id = f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+    def _save_conversation(self):
+        """Save the current conversation to disk."""
+        import config
+        if not self.messages:
+            return
+        convs = config.load_conversations()
+        # Update existing or append new
+        updated = False
+        for c in convs:
+            if c.get("id") == self._conversation_id:
+                c["messages"] = self.messages
+                from datetime import datetime as _dt
+                c["updated_at"] = _dt.now().isoformat()
+                updated = True
+                break
+        if not updated:
+            from datetime import datetime as _dt
+            first_user = next((m["content"][:30] for m in self.messages if m["role"] == "user"), "新对话")
+            convs.append({
+                "id": self._conversation_id,
+                "title": first_user,
+                "created_at": _dt.now().isoformat(),
+                "updated_at": _dt.now().isoformat(),
+                "messages": self.messages,
+            })
+        # Keep only last 100 conversations
+        if len(convs) > 100:
+            convs = convs[-100:]
+        config.save_conversations(convs)
+
     def _sys(self, text: str):
         lbl = QLabel()
         lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -729,8 +802,10 @@ class ChatWindow(ChatBaseWindow):
         self._live_text = ""
         for m in _TAG_RE.finditer(full):
             kind, payload = m.group(1), m.group(2).strip()
-            tag_label = f"[{kind}:{payload}]"
-            self._append_widget(_CommandResult(tag_label, ok=True))
+            # Hide command tags from chat display
+            pass
+        # Auto-save after each response
+        self._save_conversation()
 
     def _on_err(self, err: str):
         self._streaming = False
@@ -745,13 +820,14 @@ class ChatWindow(ChatBaseWindow):
         self._append_widget(err_bubble)
 
     def eventFilter(self, obj, e):
-        # No event filter needed — paintEvent handles the rounded body,
-        # and WA_TranslucentBackground ensures corners are invisible.
+        from PySide6.QtCore import QEvent
+        if obj is self and e.type() == QEvent.Type.Resize:
+            self._apply_rounded_mask()  # re-apply mask on resize
         return super().eventFilter(obj, e)
 
     def _on_state(self, state: str, _preview: str):
         cmap = {"idle": GREEN, "thinking": GOLD, "error": RED}
-        lmap = {"idle": "就绪", "thinking": "思考中…", "error": "出错"}
+        lmap = {"idle": "Ready", "thinking": "Thinking…", "error": "Error"}
         self._status.setText(lmap.get(state, "Ready"))
         self._status.setStyleSheet(
             f"color:{cmap.get(state, GREEN)};font-size:10px;"
@@ -834,15 +910,21 @@ class ChatWindow(ChatBaseWindow):
         if self.messages:
             self._send()
 
+    def closeEvent(self, event):
+        """Save conversation on window close."""
+        self._save_conversation()
+        super().closeEvent(event)
+
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
-        p.setPen(QColor(BORDER))
+        w, h = float(self.width()), float(self.height())
+        r = float(RADIUS_LG)
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(BG_DEEP))
-        p.drawRoundedRect(rect, RADIUS_LG, RADIUS_LG)
+        p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
         p.end()
 
 
