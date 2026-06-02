@@ -7,13 +7,14 @@ and persistence for conversations and job history.
 import copy
 import json
 import os
+import sys
 from typing import Any
 
 # ============================================================
 # App Info
 # ============================================================
 APP_NAME = "BuddyDesk"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 APP_AUTHOR = "BuddyDesk"
 
 # ============================================================
@@ -25,8 +26,12 @@ CONVERSATIONS_PATH = os.path.join(CONFIG_DIR, "conversations.json")
 JOBS_PATH = os.path.join(CONFIG_DIR, "jobs.json")
 EVENT_LOG_FILE = os.path.join(CONFIG_DIR, "events.log")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+import sys
+if getattr(sys, 'frozen', False):
+    _BASE = os.path.dirname(sys.executable)
+else:
+    _BASE = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(_BASE, "_internal", "assets") if getattr(sys, 'frozen', False) else os.path.join(_BASE, "assets")
 PET_FRAMES_DIR = os.path.join(ASSETS_DIR, "pet_frames")
 
 # ============================================================

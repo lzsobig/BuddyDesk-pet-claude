@@ -9,6 +9,7 @@ in the design.
 """
 import os
 import subprocess
+import sys
 
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRectF, QRect
 from PySide6.QtGui import QFont, QPainter, QColor, QBrush, QImage, QPixmap
@@ -43,7 +44,10 @@ API_PRESETS = {
 
 # Resolve asset directory once so _BackendCard can find the SVGs regardless
 # of the current working directory at import time.
-_ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+if getattr(sys, 'frozen', False):
+    _ASSETS_DIR = os.path.join(os.path.dirname(sys.executable), "_internal", "assets")
+else:
+    _ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 _CLAUDE_SVG = os.path.join(_ASSETS_DIR, "icons", "claude.svg")
 _OPENAI_SVG = os.path.join(_ASSETS_DIR, "icons", "openai.svg")
 

@@ -32,16 +32,10 @@ from theme import TEXT_MUTED, ACCENT
 # Path to the user-provided chubby-orange-cat asset pack.
 # Falls back to the local assets/ if the original isn't reachable
 # (e.g. a teammate runs the app from a different machine).
+from config import ASSETS_DIR as _ASSETS
 ASSET_DIR_CANDIDATES = [
-    r"C:\Users\李振\Desktop\chubby-orange-cat-codex-pet\frames",
-    os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "assets", "cat_frames_v2",
-    ),
-    os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "assets", "pet_frames",
-    ),
+    os.path.join(_ASSETS, "cat_frames_v2"),
+    os.path.join(_ASSETS, "pet_frames"),
 ]
 
 

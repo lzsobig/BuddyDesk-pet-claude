@@ -40,10 +40,8 @@ from ui.markdown_renderer import MarkdownRenderer
 _TAG_RE = re.compile(r"\[(APP|SHELL|CLAUDE|CMD):([^\]\n]+)\]?")
 
 # Avatar sprite path (chubby orange cat, 24x24)
-_AVATAR_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "assets", "cat_frames_v2", "frame_00.png",
-)
+from config import ASSETS_DIR as _ASSETS
+_AVATAR_PATH = os.path.join(_ASSETS, "cat_frames_v2", "frame_00.png")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
