@@ -23,15 +23,7 @@
 </p>
 
 <p align="center">
-  Pure Python, no Electron, no Node.js.
-</p>
-
-<p align="center">
   <a href="#quick-start">Quick Start</a> · <a href="#features">Features</a> · <a href="#architecture">Architecture</a> · <a href="#roadmap">Roadmap</a>
-</p>
-
-<p align="center">
-  快速入门 · 特性 · 架构 · 路线图
 </p>
 
 ---
@@ -107,13 +99,17 @@ DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 AP
 
 ## Screenshots
 
-<table>
-<tr>
-<td align="center"><strong>启动配置</strong><br><img src="docs/images/launcher.png" width="260"></td>
-<td align="center"><strong>灵动岛 · 思考中</strong><br><img src="docs/images/island.png" width="260"></td>
-<td align="center"><strong>聊天界面</strong><br><img src="docs/images/chat.png" width="260"></td>
-</tr>
-</table>
+<p align="center">
+  <img src="docs/images/launcher.png" width="260" alt="启动配置">
+  &nbsp;&nbsp;
+  <img src="docs/images/island.png" width="260" alt="灵动岛">
+  &nbsp;&nbsp;
+  <img src="docs/images/chat.png" width="260" alt="聊天界面">
+</p>
+
+<p align="center">
+  <em>启动配置 · 灵动岛思考中 · 聊天界面</em>
+</p>
 
 ---
 
