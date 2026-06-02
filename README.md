@@ -132,7 +132,7 @@ AI 后端由你选择。Claude Code 走 Anthropic API，OpenAI 模式走你自�
 ---
 
 <p align="center">
-  <img src="docs/images/cat_happy.png" width="80" alt="cat">
+  <img src="assets/cat_frames_v2/preview_wave.png" width="80" alt="wave">
   <br><br>
   <b>Made with Python and love for pixel cats</b><br>
   <sub>Inspired by <a href="https://github.com/nicepkg/HermesPet">HermesPet</a> for macOS</sub>
