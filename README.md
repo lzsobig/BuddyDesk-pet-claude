@@ -30,7 +30,8 @@
 
 ## Why BuddyDesk
 
-> AI 工具界有个不成文的规则：越专业，界面越严肃。但当你面对一只像素橘猫的时候，你不会觉得"这个问题太蠢了不好意思问"。
+> AI 工具界有个不成文的规则：越专业，界面越严肃。
+> 但当你面对一只像素橘猫的时候，你不会觉得"这个问题太蠢了不好意思问"。
 
 BuddyDesk 不是另一个聊天框。它住在你的桌面上 —— 顶部有灵动岛，角落有像素猫，快捷键一按就来，说完就走。
 
@@ -38,68 +39,61 @@ BuddyDesk 不是另一个聊天框。它住在你的桌面上 —— 顶部有�
 
 ## Features
 
-<table>
-<tr>
-<td width="33%" valign="top">
 <h3>🏝️ Dynamic Island</h3>
-屏幕顶部的浮动胶囊。5 种状态实时反馈：<br>
-<code>idle</code> <code>thinking</code> <code>result</code> <code>notify</code> <code>error</code><br><br>
-All-Paint 架构 — 所有动画在 paintEvent 中绘制，零子控件，QPainterPath 抗锯齿。
-</td>
-<td width="33%" valign="top">
+
+屏幕顶部的浮动胶囊，5 种状态实时反馈：
+
+`idle` · `thinking` · `result` · `notify` · `error`
+
+All-Paint 架构 — 所有动画在 `paintEvent` 中绘制，零子控件，`QPainterPath` 抗锯齿。悬停展开预览，点击打开聊天。
+
 <h3>🐱 Pixel Pet</h3>
-一只 128px 像素橘猫陪你工作。<br>
-7 种状态，72 帧精灵图。<br><br>
-闲逛 · 眨眼 · 睡觉 · 冒爱心 · 跟着 AI 一起思考。<br>
+
+一只 128px 像素橘猫陪你工作。7 种状态，72 帧精灵图：
+
+| State | Description |
+|-------|-------------|
+| `idle` | 静静待着 |
+| `walk` | 桌面闲逛，自动转向 |
+| `happy` | 开心跳动 |
+| `sleep` | 打瞌睡，ZZZ 飘浮 |
+| `love` | 冒爱心 |
+| `thinking` | 跟着 AI 一起思考 |
+| `error` | 出错时心疼你 |
+
 拖拽移动，双击打开聊天。
-</td>
-<td width="33%" valign="top">
+
 <h3>⚡ Command Execution</h3>
-AI 不只是聊天，<b>能直接操作你的电脑</b>。<br><br>
-<code>[APP:微信]</code> 启动应用<br>
-<code>[SHELL:dir]</code> 执行命令<br>
-<code>[CLAUDE:...]</code> Claude Code
-</td>
-</tr>
-<tr>
-<td width="33%" valign="top">
-<h3>💬 Multi-Conversation</h3>
-多对话标签栏，新建 / 切换 / 关闭。<br><br>
-自动从首条消息生成标题。<br>
-关闭时保存，启动时恢复。
-</td>
-<td width="33%" valign="top">
-<h3>🤖 Claude Code</h3>
-本地安装了 Claude Code CLI？<br>
-<b>零配置</b>，打开就用。<br><br>
-编程 · 重构 · 项目创建，一句话搞定。
-</td>
-<td width="33%" valign="top">
-<h3>🔌 Multi-Backend</h3>
-DeepSeek / NVIDIA / 硅基流动 /<br>
-Moonshot / Ollama 一键预设。<br><br>
-填一个 API Key，选个模型，开聊。
-</td>
-</tr>
-</table>
 
----
-
-## How It Works
+AI 不只是聊天，**能直接操作你的电脑**：
 
 ```
 你: 打开微信
-AI: 好的，帮你打开微信~  [APP:微信]
+AI: 好的，帮你打开微信~ [APP:微信]
    已打开: 微信
 
 你: 查看 IP 地址
-AI: 正在查询...  [SHELL:ipconfig]
+AI: 正在查询... [SHELL:ipconfig]
    IPv4: 192.168.1.xxx
 
 你: 帮我写一个贪吃蛇
-AI: 让 Claude Code 来帮你！  [CLAUDE:创建贪吃蛇游戏]
+AI: 让 Claude Code 来帮你！ [CLAUDE:创建贪吃蛇游戏]
    snake_game.py 已创建
 ```
+
+引擎自动解析回复中的标签并执行：`[APP:xxx]` 启动应用、`[SHELL:xxx]` 执行命令、`[CLAUDE:xxx]` 调用 Claude Code。
+
+<h3>💬 Multi-Conversation</h3>
+
+多对话标签栏 — 新建、切换、关闭。自动从首条消息生成标题，关闭时保存，启动时恢复。
+
+<h3>🤖 Claude Code Integration</h3>
+
+本地安装了 Claude Code CLI？**零配置，打开就用。** 编程、重构、项目创建，一句话搞定。
+
+<h3>🔌 Multi-Backend</h3>
+
+DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 API Key，选个模型，开聊。
 
 ---
 
@@ -120,29 +114,20 @@ AI: 让 Claude Code 来帮你！  [CLAUDE:创建贪吃蛇游戏]
 <summary><b>Manual Setup</b></summary>
 
 ```bash
-# Clone
 git clone https://github.com/lzsobig/BuddyDesk-pet-win.git
 cd BuddyDesk-pet-win
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run
 python main.py
 ```
 
 </details>
 
 <details>
-<summary><b>AI Backend Configuration</b></summary>
+<summary><b>AI Backend</b></summary>
 
-**Option A: Claude Code (Recommended)**
-- Install [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-- Launch BuddyDesk → Select "Claude Code" → Done
+**Claude Code** — Install [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), select "Claude Code" on launch. Done.
 
-**Option B: OpenAI API**
-- Get an API key from any supported platform
-- Launch BuddyDesk → Select "OpenAI API" → Paste key → Choose model
+**OpenAI API** — Paste API key, choose a platform:
 
 | Platform | Base URL |
 |----------|----------|
@@ -199,40 +184,6 @@ python main.py
 | Hotkey | ctypes GetAsyncKeyState |
 | Config | JSON (`~/.buddydesk/`) |
 | Testing | pytest |
-
----
-
-## Project Structure
-
-```
-buddydesk/
-├── main.py                     # Entry point
-├── bridge.py                   # Qt Signal Bridge
-├── config.py                   # Config (~/.buddydesk/)
-├── theme.py                    # Design tokens
-├── 启动 BuddyDesk.bat          # One-click launcher
-│
-├── ai/
-│   └── backend.py              # AI backends + system prompt
-│
-├── engine/
-│   ├── command_engine.py       # Tag parser & executor
-│   └── event_engine.py         # Event recorder
-│
-├── ui/
-│   ├── dynamic_island.py       # All-Paint island
-│   ├── pixel_pet.py            # Pixel cat (72 frames)
-│   ├── chat_window.py          # Multi-tab chat
-│   ├── markdown_renderer.py    # Streaming Markdown
-│   ├── launcher.py             # Config dialog
-│   └── tray.py                 # System tray
-│
-├── assets/
-│   ├── cat_frames_v2/          # Sprite frames
-│   └── icons/                  # SVG icons
-│
-└── tests/
-```
 
 ---
 
