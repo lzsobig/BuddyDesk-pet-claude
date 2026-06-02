@@ -1,5 +1,5 @@
 """
-Hermes Pet Win - Configuration
+BuddyDesk - Configuration
 
 Supports deep merge for user overrides, standardized config paths,
 and persistence for conversations and job history.
@@ -12,14 +12,14 @@ from typing import Any
 # ============================================================
 # App Info
 # ============================================================
-APP_NAME = "Hermes Pet Win"
+APP_NAME = "BuddyDesk"
 APP_VERSION = "0.2.0"
-APP_AUTHOR = "HermesPet"
+APP_AUTHOR = "BuddyDesk"
 
 # ============================================================
-# Paths — standardized under ~/.hermes_pet_win/
+# Paths — standardized under ~/.buddydesk/
 # ============================================================
-CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".hermes_pet_win")
+CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".buddydesk")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 CONVERSATIONS_PATH = os.path.join(CONFIG_DIR, "conversations.json")
 JOBS_PATH = os.path.join(CONFIG_DIR, "jobs.json")

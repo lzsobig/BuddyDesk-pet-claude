@@ -91,7 +91,7 @@ class SystemTray(QSystemTrayIcon):
         self._chat_visible = False
 
         self.setIcon(_create_tray_icon("idle"))
-        self.setToolTip("Hermes Pet Win — Ready")
+        self.setToolTip("BuddyDesk — Ready")
 
         menu = QMenu()
         menu.setStyleSheet(f"""
@@ -130,7 +130,7 @@ class SystemTray(QSystemTrayIcon):
         """Update tray icon color and tooltip text."""
         self.setIcon(_create_tray_icon(state))
         if text:
-            self.setToolTip(f"Hermes Pet — {text}")
+            self.setToolTip(f"BuddyDesk — {text}")
 
     def set_chat_visible(self, visible: bool):
         """Update menu text to reflect chat window visibility."""

@@ -26,7 +26,7 @@ import config
 # System Prompt - The brain of the assistant
 # ============================================================
 
-SYSTEM_PROMPT = """你是 Hermes Pet Win，一个 Windows 桌面 AI 助手。你不仅是一个聊天机器人，你还能直接帮助用户操作电脑。
+SYSTEM_PROMPT = """你是 BuddyDesk，一个 Windows 桌面 AI 助手。你不仅是一个聊天机器人，你还能直接帮助用户操作电脑。
 
 ## 你的核心能力
 

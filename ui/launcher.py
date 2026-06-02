@@ -508,7 +508,7 @@ class LauncherDialog(QDialog):
         content_layout.addSpacing(8)
 
         # Version
-        ver = QLabel(f"Hermes Pet Win v{config.APP_VERSION}")
+        ver = QLabel(f"BuddyDesk Win v{config.APP_VERSION}")
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ver.setStyleSheet(
             f"color:{TEXT_META};font-size:10px;background:transparent;border:none;"

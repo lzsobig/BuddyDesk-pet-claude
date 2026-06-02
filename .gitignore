@@ -8,12 +8,12 @@ venv/
 env/
 .venv/
 
-# Screenshots and temporary files
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.log
+# Screenshots and temporary files (root only — keep assets/*.png tracked)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.log
 
 # IDE
 .vscode/
@@ -27,3 +27,9 @@ Thumbs.db
 
 # Project specific
 user_config.json
+.deps_installed
+
+# Launcher screenshots (keep sprite assets)
+launcher-screenshot.png
+launcher-v2.png
+launcher-v3.png

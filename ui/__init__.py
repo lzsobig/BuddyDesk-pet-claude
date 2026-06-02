@@ -1,1 +1,1 @@
-# Hermes Pet Win - UI Package
+# BuddyDesk - UI Package

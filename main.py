@@ -1,5 +1,5 @@
 """
-Hermes Pet Win — Main Entry Point (PySide6)
+BuddyDesk — Main Entry Point (PySide6)
 
 Windows 桌面 AI 伴侣 — 灵动岛 + 像素宠物 + AI 聊天 + 命令执行
 """
@@ -37,8 +37,8 @@ from ui.tray import SystemTray
 from theme import get_stylesheet
 
 
-class HermesPetApp:
-    """Hermes Pet Win 主应用 (PySide6)"""
+class BuddyDeskApp:
+    """BuddyDesk 主应用 (PySide6)"""
 
     def __init__(self):
         self.app = QApplication(sys.argv)
@@ -115,9 +115,9 @@ class HermesPetApp:
                 self.tray.set_chat_visible(True)
 
         print(f"\n{'='*55}")
-        print(f"  Hermes Pet Win")
+        print(f"  BuddyDesk")
         print(f"  Backend: {self.bridge.backend.get_name()}")
-        print(f"  Hotkey: Ctrl+Shift+H")
+        print(f"  Hotkey: Ctrl+F")
         print(f"{'='*55}\n")
 
         self.app.exec()
@@ -162,23 +162,38 @@ class HermesPetApp:
                 )
 
     def _setup_hotkeys(self):
-        """Register global hotkeys with error handling."""
+        """Poll GetAsyncKeyState for Ctrl+F — works without admin, no third-party lib."""
+        if sys.platform != "win32":
+            return
         try:
-            import keyboard
-            keyboard.add_hotkey("ctrl+shift+h", self._toggle_chat)
+            from ctypes import windll
+            self._user32 = windll.user32
+            self._hotkey_pressed = False
+            def _poll():
+                ctrl = self._user32.GetAsyncKeyState(0x11) & 0x8000  # VK_CONTROL
+                f = self._user32.GetAsyncKeyState(0x46) & 0x8000    # VK_F
+                if ctrl and f and not self._hotkey_pressed:
+                    self._hotkey_pressed = True
+                    self._toggle_chat()
+                elif not (ctrl and f):
+                    self._hotkey_pressed = False
+            from PySide6.QtCore import QTimer
+            self._hotkey_timer = QTimer()
+            self._hotkey_timer.timeout.connect(_poll)
+            self._hotkey_timer.start(30)
             self._keyboard_registered = True
-        except ImportError:
-            print("keyboard module not available — hotkeys disabled")
         except Exception as e:
             print(f"Hotkey setup failed: {e}")
 
     def _quit(self):
+        """Clean up hotkey, tray, and app, then exit."""
+        if hasattr(self, "_hotkey_timer"):
+            self._hotkey_timer.stop()
+        self._keyboard_registered = False
         """Clean up keyboard hooks, tray, and app, then exit."""
-        # Unhook keyboard first so no stale callbacks fire during teardown
-        if self._keyboard_registered:
+        if hasattr(self, '_hotkey_listener') and self._hotkey_listener:
             try:
-                import keyboard
-                keyboard.unhook_all()
+                self._hotkey_listener.stop()
             except Exception:
                 pass
             self._keyboard_registered = False
@@ -199,7 +214,7 @@ class HermesPetApp:
 
 
 def main():
-    app = HermesPetApp()
+    app = BuddyDeskApp()
     app.run()
 
 

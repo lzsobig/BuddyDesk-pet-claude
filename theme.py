@@ -1,5 +1,5 @@
 """
-Design tokens + global QSS — Hermes Pet Win Light Theme.
+Design tokens + global QSS — BuddyDesk Light Theme.
 
 Single source of truth for the visual system. All windows use the global
 QSS from get_stylesheet(); per-widget setStyleSheet calls are limited to

@@ -1,1 +1,1 @@
-# Hermes Pet Win - AI Backend Package
+# BuddyDesk - AI Backend Package

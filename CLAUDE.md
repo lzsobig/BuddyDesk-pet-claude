@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Hermes Pet Win is a Windows desktop AI companion app (Python/PySide6) featuring a Dynamic Island, pixel pet, AI chat with command execution, and Claude Code CLI integration. **This is the integrated final release** — taking the best of two independently generated v1 versions and unifying on the chubby orange cat sprite pack.
+BuddyDesk is a Windows desktop AI companion app (Python/PySide6) featuring a Dynamic Island, pixel pet, AI chat with command execution, and Claude Code CLI integration. **This is the integrated final release** — taking the best of two independently generated v1 versions and unifying on the chubby orange cat sprite pack.
 
 **Core Innovation**: AI understands natural language commands ("打开微信", "查看IP") and executes them via a command engine that parses special tags from AI responses.
 

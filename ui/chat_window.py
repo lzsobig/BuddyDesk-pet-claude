@@ -7,6 +7,10 @@ viewport / palette / default-style-sheet that we kept hitting with QTextEdit.
 
 AI bubbles use MarkdownRenderer (headings / lists / code blocks) for
 streaming-friendly rendering. User bubbles stay as escaped plain text.
+
+Multi-conversation tab bar added: horizontal tabs between header and message
+area, each tab representing a separate conversation with title, close button,
+and "+" to create new ones.
 """
 from __future__ import annotations
 import os
@@ -14,7 +18,7 @@ import re
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, Signal, QRectF
+from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, Signal, QRectF, QTimer
 from PySide6.QtGui import (
     QColor, QPainter, QPixmap, QBrush, QPolygon, QPainterPath,
 )
@@ -35,7 +39,7 @@ from ui.markdown_renderer import MarkdownRenderer
 
 _TAG_RE = re.compile(r"\[(APP|SHELL|CLAUDE|CMD):([^\]\n]+)\]?")
 
-# Avatar sprite path (chubby orange cat, 24×24)
+# Avatar sprite path (chubby orange cat, 24x24)
 _AVATAR_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "assets", "cat_frames_v2", "frame_00.png",
@@ -62,7 +66,7 @@ class ChatBaseWindow(QWidget):
             self._fade.stop()
         self.setWindowOpacity(0)
         super().show()
-        self._apply_rounded_mask()  # sync — mask must be set before first paint
+        self._apply_rounded_mask()
         self._fade = QPropertyAnimation(self, b"windowOpacity")
         self._fade.setDuration(self.FADE_MS)
         self._fade.setEasingCurve(QEasingCurve.OutCubic)
@@ -75,14 +79,19 @@ class ChatBaseWindow(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        p.setPen(Qt.PenStyle.NoPen)  # no border — avoids setMask clipping jagged edge
+        w, h = float(self.width()), float(self.height())
+        # CRITICAL: fill entire widget transparent FIRST — overrides QSS solid background
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.fillRect(QRectF(0, 0, w, h), Qt.GlobalColor.transparent)
+        # Draw rounded rect background — corners stay transparent
         p.setBrush(QColor(BG_DEEP))
-        p.drawRoundedRect(QRectF(0, 0, float(self.width()), float(self.height())), RADIUS_LG, RADIUS_LG)
+        p.drawRoundedRect(QRectF(0, 0, w, h), RADIUS_LG, RADIUS_LG)
         p.end()
 
     def _apply_rounded_mask(self):
-        w, h = self.width(), self.height()
         from PySide6.QtGui import QPainterPath, QRegion, QTransform
+        w, h = self.width(), self.height()
         path = QPainterPath()
         path.addRoundedRect(QRectF(0.0, 0.0, float(w), float(h)), RADIUS_LG, RADIUS_LG)
         self.setMask(QRegion(path.toFillPolygon(QTransform()).toPolygon()))
@@ -163,7 +172,7 @@ class ChatInput(QPlainTextEdit):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_triangle_icon(size: int = 34) -> QPixmap:
-    """Painted triangle send icon — no font dependency (▶ unicode renders blank
+    """Painted triangle send icon — no font dependency (unicode renders blank
     in some Windows fonts). Used in chat input pill."""
     px = QPixmap(size, size)
     px.fill(Qt.GlobalColor.transparent)
@@ -437,30 +446,51 @@ class _CommandResult(QFrame):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ChatWindow(ChatBaseWindow):
-    """A frameless chat panel with a scrollable message list."""
+    """A frameless chat panel with a scrollable message list and conversation tabs."""
 
     def __init__(self, bridge: AIBridge, parent=None):
         super().__init__(parent)
         self.bridge = bridge
-        self.messages: list[dict] = []
         self._streaming = False
         self._typing_widget: _TypingBubble | None = None
         self._live_widget: _MessageBubble | None = None
         self._live_text: str = ""
         self._md = MarkdownRenderer()
-        self._conversation_id: str = ""
+
+        # ── Multi-conversation state ──
+        self._conversations: list[dict] = []  # [{id, title, messages, created_at, updated_at}, ...]
+        self._active_idx: int = 0  # index into _conversations
 
         self.setFixedSize(480, 640)
-        self.setWindowTitle("Hermes Pet Chat")
+        self.setWindowTitle("BuddyDesk Chat")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setStyleSheet("background: transparent;")
+        self.setAutoFillBackground(False)
+        from PySide6.QtGui import QPalette
+        pal = self.palette()
+        pal.setBrush(QPalette.Window, Qt.BrushStyle.NoBrush)
+        self.setPalette(pal)
         self.installEventFilter(self)
 
         self._build_ui()
         self._wire()
-        self._load_last_conversation()
+        self._load_all_conversations()
+        self._update_tab_bar()
         if not self.messages:
             self._sys_welcome()
+
+    # ── messages property ─────────────────────────────────────────
+    @property
+    def messages(self) -> list[dict]:
+        """Return the message list of the active conversation."""
+        if 0 <= self._active_idx < len(self._conversations):
+            return self._conversations[self._active_idx]["messages"]
+        return []
+
+    @messages.setter
+    def messages(self, value: list[dict]) -> None:
+        """Direct assignment — for backward compatibility during init."""
+        if 0 <= self._active_idx < len(self._conversations):
+            self._conversations[self._active_idx]["messages"] = value
 
     # ── UI ──────────────────────────────────────────────────────
     def _build_ui(self):
@@ -469,6 +499,18 @@ class ChatWindow(ChatBaseWindow):
         root.setSpacing(0)
 
         root.addWidget(self._build_header())
+
+        # ── Tab bar (between header and scroll area) ──
+        self._tab_bar_container = QFrame()
+        self._tab_bar_container.setFixedHeight(36)
+        self._tab_bar_container.setStyleSheet(
+            f"QFrame {{ background:{BG_DEEP}; border:none; }}"
+        )
+        self._tab_bar_layout = QHBoxLayout(self._tab_bar_container)
+        self._tab_bar_layout.setContentsMargins(12, 4, 8, 0)
+        self._tab_bar_layout.setSpacing(4)
+        self._tab_bar_layout.addStretch(1)
+        root.addWidget(self._tab_bar_container)
 
         # Scrollable message area
         self._scroll = QScrollArea()
@@ -681,17 +723,210 @@ class ChatWindow(ChatBaseWindow):
             f"Backend: {self.bridge.backend.get_name()}"
         )
 
-    # ── Conversation persistence ──
-    def _load_last_conversation(self):
-        """Load the most recent conversation from disk."""
-        import config, uuid
-        from datetime import datetime
-        convs = config.load_conversations()
+    # ─────────────────────────────────────────────────────────────────
+    # Tab bar management
+    # ─────────────────────────────────────────────────────────────────
+
+    def _update_tab_bar(self) -> None:
+        """Rebuild the tab bar to reflect the current conversations list."""
+        # Clear existing widgets from the layout
+        while self._tab_bar_layout.count():
+            item = self._tab_bar_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
+        # Tab buttons for each conversation
+        for idx, conv in enumerate(self._conversations):
+            title = conv.get("title", "新对话")
+            is_active = (idx == self._active_idx)
+
+            tab_btn = QPushButton()
+            tab_btn.setFixedHeight(28)
+            tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            display = title[:12] + "..." if len(title) > 12 else title
+            tab_btn.setToolTip(title)
+            tab_btn._conv_idx = idx  # store index for click handler
+
+            if is_active:
+                tab_btn.setText(display)
+                tab_btn.setStyleSheet(
+                    f"QPushButton {{ "
+                    f"  background:{ACCENT}; color:{WHITE}; "
+                    f"  border:none; border-radius:6px; "
+                    f"  padding:0 10px; font-size:11px; font-weight:600; "
+                    f"  font-family:{FONT_FAMILY}; "
+                    f"  min-width:0; "
+                    f"}} "
+                    f"QPushButton:hover {{ background:{ACCENT_BRIGHT}; }}"
+                )
+            else:
+                tab_btn.setText(display)
+                tab_btn.setStyleSheet(
+                    f"QPushButton {{ "
+                    f"  background:transparent; color:{TEXT_MUTED}; "
+                    f"  border:none; border-radius:6px; "
+                    f"  padding:0 10px; font-size:11px; "
+                    f"  font-family:{FONT_FAMILY}; "
+                    f"  min-width:0; "
+                    f"}} "
+                    f"QPushButton:hover {{ background:{ACCENT_SOFT}; color:{TEXT_SECONDARY}; }}"
+                )
+
+            tab_btn.clicked.connect(lambda checked, i=idx: self._switch_conversation(i))
+            self._tab_bar_layout.addWidget(tab_btn)
+
+            # Close button (only if more than 1 conversation)
+            if len(self._conversations) > 1:
+                close_btn = QPushButton("x")
+                close_btn.setFixedSize(18, 18)
+                close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                close_btn.setToolTip("关闭对话")
+                close_btn._close_idx = idx
+                close_btn.setStyleSheet(
+                    f"QPushButton {{ "
+                    f"  background:transparent; color:{TEXT_MUTED}; "
+                    f"  border:none; border-radius:4px; "
+                    f"  font-size:10px; font-weight:600; "
+                    f"  font-family:{FONT_FAMILY}; "
+                    f"}} "
+                    f"QPushButton:hover {{ background:{RED_SOFT}; color:{RED}; }}"
+                )
+                close_btn.clicked.connect(
+                    lambda checked, i=idx: self._close_conversation(i)
+                )
+                self._tab_bar_layout.addWidget(close_btn)
+
+        # "+" button to add new conversation
+        add_btn = QPushButton("+")
+        add_btn.setFixedSize(28, 28)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setToolTip("新建对话")
+        add_btn.setStyleSheet(
+            f"QPushButton {{ "
+            f"  background:transparent; color:{TEXT_MUTED}; "
+            f"  border:1px dashed {BORDER}; border-radius:6px; "
+            f"  font-size:14px; font-weight:600; "
+            f"  font-family:{FONT_FAMILY}; "
+            f"}} "
+            f"QPushButton:hover {{ "
+            f"  background:{ACCENT_SOFT}; color:{ACCENT}; "
+            f"  border-color:{ACCENT}; "
+            f"}}"
+        )
+        add_btn.clicked.connect(self._add_conversation)
+        self._tab_bar_layout.addWidget(add_btn)
+
+        self._tab_bar_layout.addStretch(1)
+
+    def _switch_conversation(self, idx: int) -> None:
+        """Save current conversation, then load the conversation at *idx*."""
+        if idx == self._active_idx:
+            return
+        if idx < 0 or idx >= len(self._conversations):
+            return
+
+        # Save current messages to disk
+        self._save_conversation()
+
+        # Update active index
+        self._active_idx = idx
+
+        # Clear message display
+        self._clear_message_display()
+
+        # Load messages from the newly active conversation
+        for msg in self.messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            time_str = msg.get("time", "")
+            if role == "user":
+                self._append_widget(_MessageBubble("user", content, time_str, renderer=self._md))
+            elif role == "assistant":
+                self._append_widget(_MessageBubble("ai", content, time_str, renderer=self._md))
+
+        # Update tab bar highlight
+        self._update_tab_bar()
+
+    def _add_conversation(self) -> None:
+        """Create a new empty conversation and switch to it."""
+        import uuid
+        self._save_conversation()
+
+        new_conv = {
+            "id": f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}",
+            "title": "新对话",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "messages": [],
+        }
+        self._conversations.append(new_conv)
+        self._active_idx = len(self._conversations) - 1
+
+        self._clear_message_display()
+        self._sys_welcome()
+        self._update_tab_bar()
+        self._save_all_conversations()
+
+    def _close_conversation(self, idx: int) -> None:
+        """Remove conversation at *idx*. Switch to adjacent if the closed one was active."""
+        if len(self._conversations) <= 1:
+            return  # always keep at least one
+        if idx < 0 or idx >= len(self._conversations):
+            return
+
+        self._conversations.pop(idx)
+
+        # Adjust active index
+        if self._active_idx == idx:
+            # Switched-away-from was closed — pick adjacent
+            self._active_idx = min(idx, len(self._conversations) - 1)
+            self._clear_message_display()
+            for msg in self.messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                time_str = msg.get("time", "")
+                if role == "user":
+                    self._append_widget(_MessageBubble("user", content, time_str, renderer=self._md))
+                elif role == "assistant":
+                    self._append_widget(_MessageBubble("ai", content, time_str, renderer=self._md))
+        elif self._active_idx > idx:
+            self._active_idx -= 1
+
+        self._update_tab_bar()
+        self._save_all_conversations()
+
+    def _rename_conversation(self, idx: int, title: str) -> None:
+        """Rename conversation at *idx*."""
+        if 0 <= idx < len(self._conversations):
+            self._conversations[idx]["title"] = title
+            self._update_tab_bar()
+            self._save_all_conversations()
+
+    def _generate_title(self, messages: list[dict]) -> str:
+        """Auto-generate a title from the first user message (max 12 chars)."""
+        for msg in messages:
+            if msg.get("role") == "user":
+                content = msg.get("content", "").strip()
+                if content:
+                    return content[:12] + "..." if len(content) > 12 else content
+        return "新对话"
+
+    # ─────────────────────────────────────────────────────────────────
+    # Conversation persistence (multi-conversation)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _load_all_conversations(self) -> None:
+        """Load all conversations from disk. Falls back to creating one empty conversation."""
+        import uuid
+        import config as _cfg
+
+        convs = _cfg.load_conversations()
         if convs:
-            last = convs[-1]
-            self._conversation_id = last.get("id", str(uuid.uuid4()))
-            self.messages = last.get("messages", [])
-            # Re-render saved messages as widgets
+            self._conversations = convs
+            self._active_idx = len(convs) - 1  # default to the last conversation
+            # Render messages from the active conversation
             for msg in self.messages:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
@@ -701,38 +936,59 @@ class ChatWindow(ChatBaseWindow):
                 elif role == "assistant":
                     self._append_widget(_MessageBubble("ai", content, time_str, renderer=self._md))
         else:
-            self._conversation_id = f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+            # No saved conversations — create the first one
+            self._conversations = [{
+                "id": f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}",
+                "title": "新对话",
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "messages": [],
+            }]
+            self._active_idx = 0
 
-    def _save_conversation(self):
-        """Save the current conversation to disk."""
-        import config
-        if not self.messages:
+    def _save_conversation(self) -> None:
+        """Persist the current active conversation's messages and title to disk."""
+        import config as _cfg
+        if not (0 <= self._active_idx < len(self._conversations)):
             return
-        convs = config.load_conversations()
-        # Update existing or append new
-        updated = False
-        for c in convs:
-            if c.get("id") == self._conversation_id:
-                c["messages"] = self.messages
-                from datetime import datetime as _dt
-                c["updated_at"] = _dt.now().isoformat()
-                updated = True
-                break
-        if not updated:
-            from datetime import datetime as _dt
-            first_user = next((m["content"][:30] for m in self.messages if m["role"] == "user"), "新对话")
-            convs.append({
-                "id": self._conversation_id,
-                "title": first_user,
-                "created_at": _dt.now().isoformat(),
-                "updated_at": _dt.now().isoformat(),
-                "messages": self.messages,
-            })
-        # Keep only last 100 conversations
-        if len(convs) > 100:
-            convs = convs[-100:]
-        config.save_conversations(convs)
+        conv = self._conversations[self._active_idx]
+        # Auto-generate title from first user message if still default
+        if conv.get("title") == "新对话" and self.messages:
+            conv["title"] = self._generate_title(self.messages)
+        conv["updated_at"] = datetime.now().isoformat()
+        # Write entire list
+        _cfg.save_conversations(self._conversations)
 
+    def _save_all_conversations(self) -> None:
+        """Persist the full conversation list to disk."""
+        import config as _cfg
+        _cfg.save_conversations(self._conversations)
+
+    def _clear_message_display(self) -> None:
+        """Remove all widgets from the message layout (but keep the trailing stretch)."""
+        self._streaming = False
+        self._send_btn.setEnabled(True)
+        self._live_widget = None
+        self._live_text = ""
+        self._typing_widget = None
+
+        while self._messages_layout.count() > 1:
+            item = self._messages_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+            else:
+                sub = item.layout() if item else None
+                if sub is not None:
+                    while sub.count():
+                        s = sub.takeAt(0)
+                        sw = s.widget() if s else None
+                        if sw is not None:
+                            sw.setParent(None)
+                            sw.deleteLater()
+
+    # ── message ops (continued) ──
     def _sys(self, text: str):
         lbl = QLabel()
         lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -806,6 +1062,8 @@ class ChatWindow(ChatBaseWindow):
             pass
         # Auto-save after each response
         self._save_conversation()
+        # Update tab title if this is the first user message response
+        self._update_tab_bar()
 
     def _on_err(self, err: str):
         self._streaming = False
@@ -820,9 +1078,6 @@ class ChatWindow(ChatBaseWindow):
         self._append_widget(err_bubble)
 
     def eventFilter(self, obj, e):
-        from PySide6.QtCore import QEvent
-        if obj is self and e.type() == QEvent.Type.Resize:
-            self._apply_rounded_mask()  # re-apply mask on resize
         return super().eventFilter(obj, e)
 
     def _on_state(self, state: str, _preview: str):
@@ -922,7 +1177,10 @@ class ChatWindow(ChatBaseWindow):
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         w, h = float(self.width()), float(self.height())
         r = float(RADIUS_LG)
+        # Clear to transparent FIRST — overrides QSS solid background
         p.setPen(Qt.PenStyle.NoPen)
+        p.fillRect(QRectF(0, 0, w, h), Qt.GlobalColor.transparent)
+        # Draw rounded rect — corners remain transparent (anti-aliased)
         p.setBrush(QColor(BG_DEEP))
         p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
         p.end()
