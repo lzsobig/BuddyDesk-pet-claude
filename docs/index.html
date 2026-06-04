@@ -1,0 +1,1171 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BuddyDesk — a pixel cat, a hotkey, a different computer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bricolage+Grotesque:ital,opsz,wght@0,12..96,400;0,12..96,600;0,12..96,700;0,12..96,800;1,12..96,500;1,12..96,700&family=JetBrains+Mono:wght@400;500;600&family=VT323&display=swap" rel="stylesheet">
+  <script>document.documentElement.classList.replace('no-js', 'js');</script>
+  <style>
+    *,
+    *::before,
+    *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* When JS is unavailable, force content visible (no opacity:0 / transform locked by GSAP) */
+    .no-js .text-layer,
+    .no-js .brain { opacity: 1 !important; transform: none !important; }
+
+    /* When JS is enabled, the hero text and brain list start hidden so GSAP can reveal them */
+    .js .text-layer { opacity: 0; transform: scale(0.5); transform-origin: 50% 50%; }
+    .js .brain { opacity: 0; transform: translateY(20px); }
+
+    :root {
+      --bg:        #f5f1e8;
+      --bg-deep:   #efeadd;
+      --bg-card:   #fffdf7;
+      --ink:       #1a1a1a;
+      --ink-2:     #3d3a30;
+      --ink-3:     #6b6859;
+      --ink-4:     #9a968a;
+      --line:      #d9d4c5;
+      --line-soft: #e8e3d4;
+      --sage:      #5cb89a;
+      --sage-d:    #3e9a7c;
+      --sage-soft: rgba(92,184,154,0.12);
+      --orange:    #e87b3e;
+      --orange-soft: rgba(232,123,62,0.12);
+      --black:     #0a0a0a;
+      --radius:    14px;
+      --radius-lg: 24px;
+      --shadow-sm: 0 1px 2px rgba(40,30,10,0.05);
+      --shadow-md: 0 2px 6px rgba(40,30,10,0.06), 0 12px 32px rgba(40,30,10,0.08);
+      --shadow-lg: 0 4px 12px rgba(40,30,10,0.08), 0 24px 60px rgba(40,30,10,0.12);
+    }
+
+    html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    /* ========== NAV ========== */
+    .site-nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 14px 0;
+      background: rgba(245, 241, 232, 0.72);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .nav-row {
+      display: flex; align-items: center; gap: 32px;
+    }
+
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+      text-decoration: none;
+      color: var(--ink);
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -0.025em;
+    }
+    .brand-mark {
+      width: 14px; height: 14px;
+      background: var(--orange);
+      border-radius: 4px;
+      display: inline-block;
+      transform: rotate(-6deg);
+    }
+    .nav-brand .ver {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--ink-4);
+      margin-left: 4px;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-links {
+      list-style: none;
+      display: flex; gap: 2px;
+      margin: 0 auto;
+      padding: 0;
+    }
+    .nav-links a {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--ink-3);
+      text-decoration: none;
+      letter-spacing: 0.02em;
+      padding: 8px 12px;
+      border-radius: 8px;
+      transition: color 0.2s, background 0.2s;
+    }
+    .nav-links a:hover { color: var(--ink); background: rgba(0,0,0,0.04); }
+    .nav-links a.active { color: var(--ink); background: rgba(0,0,0,0.06); }
+    .nav-links a.active .num { color: var(--sage-d); }
+    .nav-links .num {
+      color: var(--ink-4);
+      font-size: 10px;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-cta {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+      color: #f5f1e8;
+      text-decoration: none;
+      padding: 9px 16px;
+      background: var(--ink);
+      border-radius: 999px;
+      letter-spacing: 0.04em;
+      transition: background 0.2s, transform 0.2s;
+    }
+    .nav-cta:hover { background: var(--sage-d); transform: translateY(-1px); }
+    .nav-cta .arrow { display: inline-block; transition: transform 0.2s; }
+    .nav-cta:hover .arrow { transform: translate(2px, -2px); }
+
+    @media (max-width: 900px) {
+      .nav-links { display: none; }
+      .nav-row { justify-content: space-between; }
+    }
+
+    .container { max-width: 1240px; margin: 0 auto; padding: 0 32px; }
+
+    /* ========== HERO (sticky + scatter) ========== */
+    .hero-wrapper { position: relative; height: 220vh; }
+
+    .hero-sticky {
+      position: sticky; top: 0;
+      width: 100%; height: 100vh;
+      background: var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+
+    .image-stack {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 360px; height: 254px;
+      transform: translate(-50%, -50%);
+      z-index: 2; pointer-events: none;
+    }
+
+    .card-wrap {
+      position: absolute; top: 0; left: 0;
+      width: 360px; height: 254px;
+      will-change: transform;
+    }
+
+    .card {
+      position: relative;
+      width: 100%; height: 100%;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+      background: var(--bg-deep);
+      cursor: pointer;
+      pointer-events: auto;
+      will-change: transform;
+    }
+    .card img { width: 100%; height: 100%; object-fit: contain; display: block; padding: 8px; }
+
+    .text-layer {
+      position: relative; z-index: 1;
+      text-align: center;
+      max-width: 980px;
+      padding: 0 24px;
+      pointer-events: none;
+    }
+    .text-layer h1 {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: clamp(3rem, 7.5vw, 6.25rem);
+      font-weight: 800;
+      line-height: 0.92;
+      letter-spacing: -0.05em;
+      color: var(--ink);
+      margin-bottom: 28px;
+    }
+    .text-layer h1 em {
+      font-style: italic;
+      font-weight: 500;
+      color: var(--sage-d);
+    }
+    .text-layer p {
+      font-size: 15px;
+      line-height: 1.6;
+      color: var(--ink-3);
+      max-width: 480px;
+      margin: 0 auto 32px;
+    }
+    .text-layer p strong {
+      color: var(--ink-2);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      background: var(--bg-card);
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--line-soft);
+    }
+
+    .cta {
+      display: inline-flex; align-items: center; gap: 10px;
+      background: var(--ink);
+      color: #f5f1e8;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      padding: 16px 28px;
+      border: none;
+      border-radius: 999px;
+      cursor: pointer;
+      pointer-events: auto;
+      text-decoration: none;
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+    .cta:hover  { background: var(--sage-d); transform: translateY(-1px); }
+    .cta .arrow { display: inline-block; transition: transform 0.2s; }
+    .cta:hover .arrow { transform: translateX(3px); }
+
+    .status-bar {
+      position: absolute;
+      bottom: 24px; left: 32px; right: 32px;
+      display: flex; justify-content: space-between; align-items: center;
+      z-index: 3;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--ink-3);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .status-bar a { color: inherit; text-decoration: none; transition: color 0.2s; }
+    .status-bar a:hover { color: var(--ink); }
+    .status { display: flex; align-items: center; gap: 8px; }
+    .dot {
+      width: 8px; height: 8px;
+      background: var(--sage);
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px var(--sage-soft);
+      animation: pulse 2.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(92,184,154,0.18); }
+      50%      { box-shadow: 0 0 0 6px rgba(92,184,154,0.04); }
+    }
+
+    /* ========== SECTION CHROME ========== */
+    .section { padding: 140px 0; position: relative; }
+    .section.alt  { background: var(--bg-deep); }
+    .section.dark { background: var(--black); color: #f5f1e8; }
+
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--sage-d);
+      margin-bottom: 28px;
+    }
+    .eyebrow::before {
+      content: ""; width: 24px; height: 1px;
+      background: currentColor;
+    }
+    .section.dark .eyebrow { color: var(--sage); }
+
+    .display {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-weight: 800;
+      line-height: 0.92;
+      letter-spacing: -0.045em;
+      color: var(--ink);
+    }
+    .display em { font-style: italic; font-weight: 500; color: var(--orange); }
+
+    /* ========== THE CAT ========== */
+    .cat-section { padding: 100px 0 140px; }
+    .cat-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 80px;
+      align-items: center;
+    }
+
+    .cat-headline {
+      font-size: clamp(3.5rem, 8vw, 7.5rem);
+      margin-bottom: 32px;
+    }
+    .cat-quote {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-style: italic;
+      font-size: clamp(1.25rem, 1.6vw, 1.5rem);
+      font-weight: 500;
+      line-height: 1.4;
+      color: var(--ink-2);
+      border-left: 2px solid var(--orange);
+      padding-left: 24px;
+      margin: 40px 0 32px;
+      max-width: 460px;
+    }
+    .cat-quote::before {
+      content: "“";
+      font-size: 2em;
+      color: var(--orange);
+      line-height: 0;
+      margin-right: 4px;
+      vertical-align: -0.2em;
+    }
+
+    .moods {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      margin-top: 24px;
+    }
+    .mood {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      padding: 8px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--ink-2);
+      background: var(--bg-card);
+    }
+    .mood.active { background: var(--orange-soft); border-color: var(--orange); color: var(--orange); }
+
+    .cat-stage {
+      position: relative;
+      aspect-ratio: 1;
+      background: var(--bg-card);
+      border-radius: 32px;
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-md);
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    .cat-stage::before {
+      content: "";
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(var(--line-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+      background-size: 32px 32px;
+      opacity: 0.5;
+    }
+    .cat-stage img {
+      position: relative;
+      width: 70%;
+      image-rendering: pixelated;
+      image-rendering: -moz-crisp-edges;
+      filter: drop-shadow(0 12px 24px rgba(232,123,62,0.18));
+    }
+    .cat-tag {
+      position: absolute;
+      top: 24px; left: 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--ink-3);
+      letter-spacing: 0.05em;
+    }
+    .cat-tag .live {
+      display: inline-block;
+      width: 6px; height: 6px;
+      background: var(--sage);
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    /* ========== THE HOTKEY ========== */
+    .hotkey-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 80px;
+      align-items: center;
+    }
+
+    .hotkey-display {
+      font-size: clamp(3.5rem, 7vw, 6.5rem);
+      margin-bottom: 24px;
+    }
+    .hotkey-body {
+      font-size: 17px;
+      line-height: 1.6;
+      color: var(--ink-2);
+      max-width: 480px;
+    }
+
+    .key-cluster {
+      position: relative;
+      background: var(--bg-card);
+      border-radius: 32px;
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-md);
+      padding: 56px 40px;
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      flex-wrap: wrap;
+    }
+    .key {
+      display: flex; align-items: center; justify-content: center;
+      min-width: 92px; height: 92px;
+      padding: 0 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--ink);
+      background: var(--bg);
+      border: 1.5px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 4px 0 var(--line), 0 6px 12px rgba(0,0,0,0.04);
+      transition: transform 0.12s, box-shadow 0.12s;
+      will-change: transform;
+    }
+    .key.pressed {
+      transform: translateY(4px);
+      box-shadow: 0 0 0 var(--line), 0 2px 4px rgba(0,0,0,0.04);
+      background: var(--sage-soft);
+      border-color: var(--sage);
+      color: var(--sage-d);
+    }
+    .key-plus {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-weight: 300;
+      font-size: 36px;
+      color: var(--ink-4);
+    }
+
+    .hotkey-caption {
+      margin-top: 32px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--ink-3);
+      letter-spacing: 0.04em;
+      text-align: center;
+    }
+    .hotkey-caption .sage { color: var(--sage-d); }
+
+    /* ========== IN CONVERSATION ========== */
+    .chat-section .section-head { text-align: center; margin-bottom: 80px; }
+    .chat-section .display { font-size: clamp(3rem, 6.5vw, 5.5rem); }
+
+    .chat-window {
+      max-width: 720px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+
+    .chat-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line-soft);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--ink-3);
+    }
+    .chat-bar .dot-r { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
+    .chat-bar .dot-y { width: 10px; height: 10px; border-radius: 50%; background: #febc2e; }
+    .chat-bar .dot-g { width: 10px; height: 10px; border-radius: 50%; background: #28c840; }
+    .chat-bar .title { margin-left: 12px; }
+
+    .chat-stream { padding: 32px; display: flex; flex-direction: column; gap: 18px; }
+
+    .bubble {
+      max-width: 80%;
+      padding: 12px 18px;
+      border-radius: 18px;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      background: var(--ink);
+      color: var(--bg);
+      border-bottom-right-radius: 6px;
+    }
+    .bubble.user::before {
+      content: "you said · ";
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      opacity: 0.5;
+      margin-right: 4px;
+    }
+    .bubble.bot {
+      align-self: flex-start;
+      background: var(--bg);
+      color: var(--ink);
+      border-bottom-left-radius: 6px;
+      border: 1px solid var(--line-soft);
+    }
+    .bubble .tag {
+      display: inline-block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--sage-d);
+      background: var(--sage-soft);
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+    }
+    .bubble pre {
+      margin-top: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      background: var(--ink);
+      color: #c4d4cc;
+      padding: 12px 16px;
+      border-radius: 10px;
+      overflow-x: auto;
+      line-height: 1.6;
+    }
+    .bubble.system {
+      align-self: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--ink-4);
+      background: transparent;
+      padding: 4px 12px;
+      border: 1px dashed var(--line);
+    }
+
+    /* ========== A BUDDY (editorial list) ========== */
+    .buddy-section .display { font-size: clamp(3rem, 6vw, 5rem); max-width: 14ch; }
+    .buddy-section .section-lede { font-size: 17px; color: var(--ink-2); max-width: 480px; }
+
+    .brain-list {
+      list-style: none;
+      margin-top: 80px;
+      border-top: 1px solid var(--line);
+    }
+
+    .brain {
+      display: grid;
+      grid-template-columns: 48px 1fr auto;
+      column-gap: 40px;
+      align-items: start;
+      padding: 36px 0;
+      border-bottom: 1px solid var(--line);
+      position: relative;
+      transition: padding-left 0.3s ease;
+      cursor: default;
+    }
+    .brain:hover { padding-left: 20px; }
+
+    .brain-id {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--ink-4);
+      padding-top: 16px;
+      letter-spacing: 0.05em;
+    }
+
+    .brain-main { min-width: 0; }
+
+    .brain-name {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: clamp(2rem, 3.2vw, 2.75rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1;
+      color: var(--ink);
+      margin-bottom: 14px;
+    }
+
+    .brain-role {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 400;
+      color: var(--ink-4);
+      letter-spacing: 0.04em;
+    }
+
+    .brain-desc {
+      font-size: 16px;
+      line-height: 1.55;
+      color: var(--ink-3);
+      max-width: 540px;
+    }
+
+    .brain-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      color: var(--ink-3);
+      padding-top: 18px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .brain-tag .ar { color: var(--sage-d); margin-right: 4px; }
+
+    /* Claude Code: a single orange marker, no box */
+    .brain-feat .brain-name { color: var(--orange); }
+    .brain-feat .brain-tag .ar { color: var(--orange); }
+    .brain-feat .brain-id::after {
+      content: "";
+      display: inline-block;
+      width: 6px; height: 6px;
+      margin-left: 6px;
+      background: var(--orange);
+      border-radius: 50%;
+      vertical-align: middle;
+      transform: translateY(-1px);
+    }
+
+    /* ========== BRING HER HOME ========== */
+    .install-section { padding: 140px 0; }
+    .install-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 80px;
+      align-items: center;
+    }
+    .install-headline { font-size: clamp(3.5rem, 7vw, 6rem); margin-bottom: 24px; }
+    .install-body { font-size: 17px; line-height: 1.6; color: rgba(255,255,255,0.6); max-width: 420px; }
+    .install-body strong { color: var(--sage); font-weight: 500; }
+
+    .terminal {
+      background: #0d0d0d;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 0 0 1px #1a1a1a, 0 30px 80px rgba(0,0,0,0.4);
+    }
+    .terminal-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 14px 18px;
+      background: #161616;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .terminal-bar span { width: 12px; height: 12px; border-radius: 50%; }
+    .terminal-bar span:nth-child(1) { background: #ff5f57; }
+    .terminal-bar span:nth-child(2) { background: #febc2e; }
+    .terminal-bar span:nth-child(3) { background: #28c840; }
+    .terminal-bar .label {
+      margin-left: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #6a6a6a;
+    }
+
+    .terminal-body {
+      padding: 24px 28px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      line-height: 1.85;
+      color: #d4d4d4;
+    }
+    .terminal-body .ps { color: var(--sage); margin-right: 8px; user-select: none; }
+    .terminal-body .cm { color: #6a6a6a; }
+    .terminal-body .hl { color: #e87b3e; }
+    .terminal-body .ok { color: var(--sage); }
+
+    .install-actions {
+      display: flex; gap: 12px; margin-top: 32px; flex-wrap: wrap;
+    }
+    .install-actions .cta.on-dark { background: var(--sage); }
+    .install-actions .cta.on-dark:hover { background: #6dc9aa; }
+    .install-actions .cta.ghost {
+      background: transparent;
+      color: rgba(255,255,255,0.7);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    .install-actions .cta.ghost:hover { color: #fff; border-color: rgba(255,255,255,0.3); }
+
+    .reqs {
+      display: flex; gap: 28px; flex-wrap: wrap;
+      margin-top: 40px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+    }
+    .reqs span::before {
+      content: "// ";
+      color: var(--sage);
+    }
+
+    /* ========== FOOTER ========== */
+    footer.site-footer {
+      background: var(--bg-deep);
+      border-top: 1px solid var(--line);
+      padding: 56px 0 40px;
+    }
+    .footer-row {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 24px;
+    }
+    .footer-brand {
+      display: flex; align-items: center; gap: 12px;
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .footer-mark {
+      width: 32px; height: 32px;
+      background: var(--orange);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .footer-links { display: flex; gap: 28px; font-size: 14px; }
+    .footer-links a { color: var(--ink-3); text-decoration: none; transition: color 0.2s; }
+    .footer-links a:hover { color: var(--ink); }
+    .footer-fine {
+      margin-top: 32px;
+      font-size: 12px;
+      color: var(--ink-4);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .footer-fine em {
+      font-family: 'Bricolage Grotesque', serif;
+      font-style: italic;
+      font-size: 14px;
+      color: var(--ink-3);
+    }
+
+    /* ========== MARQUEE ========== */
+    .marquee {
+      overflow: hidden;
+      padding: 24px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: var(--bg);
+    }
+    .marquee-track {
+      display: flex; gap: 48px;
+      animation: marquee 30s linear infinite;
+      white-space: nowrap;
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-style: italic;
+      font-weight: 500;
+      font-size: 28px;
+      color: var(--ink-3);
+    }
+    .marquee-track span { display: inline-flex; align-items: center; gap: 48px; }
+    .marquee-track span::after {
+      content: "✦";
+      color: var(--orange);
+      font-size: 14px;
+      font-style: normal;
+    }
+    @keyframes marquee {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+
+    /* ========== RESPONSIVE ========== */
+    @media (max-width: 980px) {
+      .cat-grid, .hotkey-grid, .install-grid { grid-template-columns: 1fr; gap: 48px; }
+      .section { padding: 80px 0; }
+      .cat-section { padding: 60px 0 80px; }
+      .brain { grid-template-columns: 32px 1fr; column-gap: 24px; }
+      .brain-tag { grid-column: 2; text-align: left; padding-top: 8px; }
+    }
+    @media (max-width: 600px) {
+      .image-stack, .card-wrap, .card { width: 240px; height: 170px; }
+      .image-stack { width: 240px; height: 170px; }
+      .text-layer h1 { font-size: clamp(2.4rem, 11vw, 3.5rem); }
+      .status-bar { left: 16px; right: 16px; bottom: 16px; font-size: 11px; }
+      .container { padding: 0 20px; }
+      .key { min-width: 72px; height: 72px; font-size: 14px; }
+      .key-plus { font-size: 28px; }
+      .brain { padding: 28px 0; }
+      .brain:hover { padding-left: 8px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- =====================  NAV  ===================== -->
+  <nav class="site-nav" aria-label="Primary">
+    <div class="container nav-row">
+      <a href="#top" class="nav-brand">
+        <span class="brand-mark"></span>
+        BuddyDesk
+        <span class="ver">v0.2.1</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#cat"><span class="num">01</span> the cat</a></li>
+        <li><a href="#hotkey"><span class="num">02</span> hotkey</a></li>
+        <li><a href="#chat"><span class="num">03</span> talk</a></li>
+        <li><a href="#brain"><span class="num">04</span> brain</a></li>
+        <li><a href="#install"><span class="num">05</span> install</a></li>
+      </ul>
+      <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener" class="nav-cta">github <span class="arrow">↗</span></a>
+    </div>
+  </nav>
+
+  <!-- =====================  HERO  ===================== -->
+  <section class="hero-wrapper" id="top">
+    <div class="hero-sticky" style="padding-top: 72px;">
+      <div class="image-stack" aria-hidden="true">
+        <div class="card-wrap"><div class="card card-a"><img src="assets/01-launcher.png?v=3" alt=""></div></div>
+        <div class="card-wrap"><div class="card card-b"><img src="assets/02-sleep.png?v=3" alt=""></div></div>
+        <div class="card-wrap"><div class="card card-c"><img src="assets/03-happy.png?v=3" alt=""></div></div>
+        <div class="card-wrap"><div class="card card-d"><img src="assets/04-thinking.png?v=3" alt=""></div></div>
+        <div class="card-wrap"><div class="card card-e"><img src="assets/05-idle.png?v=3" alt=""></div></div>
+      </div>
+
+      <div class="text-layer">
+        <h1>A pixel cat.<br>A hotkey.<br><em>A different computer.</em></h1>
+        <p>BuddyDesk lives on your taskbar. Press <strong>Ctrl+Shift+H</strong> from anywhere. She opens apps, runs commands, calls Claude. Then goes back to napping.</p>
+        <a href="#install" class="cta">Adopt a cat <span class="arrow">→</span></a>
+      </div>
+
+      <div class="status-bar">
+        <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener">github / lzsobig / BuddyDesk</a>
+        <div class="status">
+          <span class="dot"></span>
+          <span>v0.2.1 · MIT</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =====================  THE CAT  ===================== -->
+  <section class="section cat-section" id="cat">
+    <div class="container">
+      <div class="cat-grid">
+        <div>
+          <div class="eyebrow">01 · the cat</div>
+          <h2 class="display cat-headline">She has <em>seven</em><br>moods.</h2>
+          <p class="cat-quote">She walks when you walk away. She naps when you nap. She listens when you double-click.</p>
+          <div class="moods">
+            <span class="mood active">idle</span>
+            <span class="mood">walk</span>
+            <span class="mood">happy</span>
+            <span class="mood">sleep</span>
+            <span class="mood">love</span>
+            <span class="mood">thinking</span>
+            <span class="mood">error</span>
+          </div>
+        </div>
+        <div class="cat-stage">
+          <span class="cat-tag"><span class="live"></span>72 frames · idle</span>
+          <img src="assets/cat_idle.png" alt="Pixel cat idle">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =====================  MARQUEE  ===================== -->
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      <span>open wechat</span><span>check my ip</span><span>write a snake game</span><span>close chrome</span><span>what's the weather</span><span>delete the build folder</span>
+      <span>open wechat</span><span>check my ip</span><span>write a snake game</span><span>close chrome</span><span>what's the weather</span><span>delete the build folder</span>
+    </div>
+  </div>
+
+  <!-- =====================  THE HOTKEY  ===================== -->
+  <section class="section alt" id="hotkey">
+    <div class="container">
+      <div class="hotkey-grid">
+        <div>
+          <div class="eyebrow">02 · the hotkey</div>
+          <h2 class="display hotkey-display">Ctrl+<em>Shift</em>+H</h2>
+          <p class="hotkey-body">No dock. No menu. No browser tab to find. One keystroke from any app, and she slides down from the top. Press the same key to send her back. Your context never moves.</p>
+        </div>
+        <div>
+          <div class="key-cluster">
+            <div class="key" data-key="ctrl">Ctrl</div>
+            <span class="key-plus">+</span>
+            <div class="key" data-key="shift">Shift</div>
+            <span class="key-plus">+</span>
+            <div class="key" data-key="h">H</div>
+          </div>
+          <div class="hotkey-caption">
+            <span class="sage">▸ tap</span> &nbsp; she appears &nbsp;·&nbsp; <span class="sage">▸ tap again</span> &nbsp; she's gone
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =====================  IN CONVERSATION  ===================== -->
+  <section class="section chat-section" id="chat">
+    <div class="container">
+      <div class="section-head">
+        <div class="eyebrow" style="justify-content:center">03 · in conversation</div>
+        <h2 class="display">Talk to her like a <em>person</em>.</h2>
+      </div>
+
+      <div class="chat-window">
+        <div class="chat-bar">
+          <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
+          <span class="title">buddydesk · chat</span>
+        </div>
+        <div class="chat-stream">
+          <div class="bubble user">Open WeChat</div>
+          <div class="bubble bot">
+            <span class="tag">[APP:WeChat]</span><br>Launching WeChat. One moment.
+          </div>
+
+          <div class="bubble user">Check my IP</div>
+          <div class="bubble bot">
+            <span class="tag">[SHELL:ipconfig]</span><br>Running ipconfig…<br>
+            <pre>Windows IP Configuration
+
+Ethernet adapter Local Area Connection:
+   IPv4 Address. . . . . . . . : 192.168.1.100
+   Subnet Mask . . . . . . . . : 255.255.255.0
+   Default Gateway. . . . . . . : 192.168.1.1</pre>
+          </div>
+
+          <div class="bubble user">Write a snake game</div>
+          <div class="bubble bot">
+            <span class="tag">[CLAUDE:write snake in python]</span><br>Calling Claude Code. Drafting <code>snake_game.py</code> now.
+          </div>
+
+          <div class="bubble system">— three safety gates mean nothing dangerous runs without asking —</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =====================  A BUDDY  ===================== -->
+  <section class="section alt buddy-section" id="brain">
+    <div class="container">
+      <div class="eyebrow">04 · whose brain</div>
+      <h2 class="display">She'll use whichever <em>brain</em> you trust.</h2>
+      <p class="section-lede">Swap them in the launcher. Bring your own API key, or run fully local. No vendor lock-in, ever.</p>
+
+      <ul class="brain-list">
+        <li class="brain brain-feat">
+          <div class="brain-id">01</div>
+          <div class="brain-main">
+            <h3 class="brain-name">Claude Code <span class="brain-role">// zero config</span></h3>
+            <p class="brain-desc">If you have Claude Code installed, BuddyDesk finds it automatically and uses it as the default brain. No API key, no setup, no friction.</p>
+          </div>
+          <div class="brain-tag"><span class="ar">▸</span> best for most people</div>
+        </li>
+        <li class="brain">
+          <div class="brain-id">02</div>
+          <div class="brain-main">
+            <h3 class="brain-name">OpenAI <span class="brain-role">// compatible</span></h3>
+            <p class="brain-desc">Any OpenAI-compatible endpoint. Drop in a base URL and a key.</p>
+          </div>
+          <div class="brain-tag"><span class="ar">▸</span> GPT-5.5 · custom hosts</div>
+        </li>
+        <li class="brain">
+          <div class="brain-id">03</div>
+          <div class="brain-main">
+            <h3 class="brain-name">DeepSeek <span class="brain-role">// cheap &amp; capable</span></h3>
+            <p class="brain-desc">Surprisingly good, surprisingly cheap. A great default for budget work.</p>
+          </div>
+          <div class="brain-tag"><span class="ar">▸</span> V4 · still dirt cheap</div>
+        </li>
+        <li class="brain">
+          <div class="brain-id">04</div>
+          <div class="brain-main">
+            <h3 class="brain-name">Ollama <span class="brain-role">// 100% offline</span></h3>
+            <p class="brain-desc">Runs locally on your machine. Nothing leaves your laptop. Slower, but private.</p>
+          </div>
+          <div class="brain-tag"><span class="ar">▸</span> llama 4 · qwen 3 · gemma 3</div>
+        </li>
+        <li class="brain">
+          <div class="brain-id">05</div>
+          <div class="brain-main">
+            <h3 class="brain-name">NVIDIA <span class="brain-role">// NIM endpoints</span></h3>
+            <p class="brain-desc">For when you want a hosted model that isn't OpenAI or Anthropic.</p>
+          </div>
+          <div class="brain-tag"><span class="ar">▸</span> llama 4 · mistral · qwen 3</div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- =====================  BRING HER HOME  ===================== -->
+  <section class="section dark install-section" id="install">
+    <div class="container">
+      <div class="install-grid">
+        <div>
+          <div class="eyebrow">05 · bring her home</div>
+          <h2 class="display install-headline">Adopt a <em>cat</em>.</h2>
+          <p class="install-body">One clone. One double-click. She'll handle the dependencies, the Python detection, the rest. <strong>No installer wizard.</strong></p>
+          <div class="reqs">
+            <span>Windows 10 / 11</span>
+            <span>Python 3.10+</span>
+            <span>~ 60 MB</span>
+          </div>
+          <div class="install-actions">
+            <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener" class="cta on-dark">Open on GitHub <span class="arrow">↗</span></a>
+            <a href="#install" class="cta ghost">Copy clone command</a>
+          </div>
+        </div>
+
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span></span><span></span><span></span>
+            <span class="label">~/Desktop — powershell</span>
+          </div>
+          <div class="terminal-body">
+            <span class="cm"># clone the repo</span><br>
+            <span class="ps">PS&gt;</span> git clone https://github.com/lzsobig/BuddyDesk-pet-claude.git<br>
+            <span class="ps">PS&gt;</span> <span class="hl">cd</span> BuddyDesk-pet-claude<br>
+            <br>
+            <span class="cm"># double-click this — handles everything</span><br>
+            <span class="ps">PS&gt;</span> .\启动<span class="hl"> BuddyDesk</span>.bat<br>
+            <br>
+            <span class="ok">✔ Python 3.12 detected</span><br>
+            <span class="ok">✔ PySide6 installed</span><br>
+            <span class="ok">✔ Pixel cat is awake</span><br>
+            <br>
+            <span class="cm"># or for zero terminal window:</span><br>
+            <span class="ps">PS&gt;</span> .\启动<span class="hl"> BuddyDesk</span>.vbs
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =====================  FOOTER  ===================== -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-row">
+        <div class="footer-brand">
+          <span class="footer-mark">🐾</span>
+          BuddyDesk
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/lzsobig/BuddyDesk-pet-claude/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+          <a href="https://github.com/lzsobig/BuddyDesk-pet-claude/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+          <a href="https://github.com/nicepkg/HermesPet" target="_blank" rel="noopener">HermesPet ↗</a>
+        </div>
+      </div>
+      <div class="footer-fine">
+        <em>Made with Python and love for pixel cats.</em> · Windows only · 0 trackers · 0 telemetry
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+  <script>
+    gsap.registerPlugin(ScrollTrigger);
+
+    // ── Hero scatter ─────────────────────────────────────
+    const cardWraps = gsap.utils.toArray('.card-wrap');
+    const cards     = gsap.utils.toArray('.card');
+
+    const cardData = [
+      { ix: -45, iy: -30, ir: -18, sx: -360, sy: -300, sr: -25 },
+      { ix:  60, iy: -45, ir:  -8, sx:  360, sy: -280, sr:  22 },
+      { ix:   0, iy:   0, ir:   4, sx: -560, sy:  120, sr: -12 },
+      { ix: -35, iy:  35, ir:  12, sx:  560, sy:  140, sr:  17 },
+      { ix:  45, iy:  30, ir:  19, sx:    0, sy:  460, sr:   0 }
+    ];
+
+    cardWraps.forEach((wrap, i) => {
+      const d = cardData[i];
+      gsap.set(wrap, { x: d.ix, y: d.iy, rotation: d.ir, scale: 1, transformOrigin: '50% 50%' });
+    });
+    gsap.set('.text-layer', { opacity: 0, scale: 0.5, transformOrigin: '50% 50%' });
+
+    cardWraps.forEach((wrap, i) => {
+      const d = cardData[i];
+      gsap.to(wrap, {
+        x: d.ix + d.sx, y: d.iy + d.sy, rotation: d.ir + d.sr, scale: 0.8,
+        ease: 'none',
+        scrollTrigger: { trigger: '.hero-wrapper', start: 'top top', end: 'bottom bottom', scrub: 1 }
+      });
+    });
+    gsap.to('.text-layer', {
+      opacity: 1, scale: 1, ease: 'none',
+      scrollTrigger: { trigger: '.hero-wrapper', start: 'top top', end: 'bottom bottom', scrub: 1 }
+    });
+
+    cards.forEach((card) => {
+      card.addEventListener('mouseenter', () => {
+        gsap.killTweensOf(card);
+        gsap.to(card, { y: -12, scale: 1.1, duration: 0.7, ease: 'elastic.out(1, 0.5)' });
+      });
+      card.addEventListener('mouseleave', () => {
+        gsap.killTweensOf(card);
+        gsap.to(card, { y: 0, scale: 1, duration: 0.6, ease: 'elastic.out(1, 0.5)' });
+      });
+    });
+
+    // ── Section reveals (varied per section) ─────────────
+    const fadeUp = (sel, opts = {}) => {
+      gsap.utils.toArray(sel).forEach((el) => {
+        gsap.set(el, { opacity: 0, y: 40 });
+        gsap.to(el, {
+          opacity: 1, y: 0, duration: 0.9, ease: 'power3.out',
+          ...opts,
+          scrollTrigger: { trigger: el, start: 'top 85%', once: true }
+        });
+      });
+    };
+    fadeUp('.cat-grid > *');
+    fadeUp('.hotkey-grid > *');
+    fadeUp('.chat-window');
+    fadeUp('.install-grid > *');
+    fadeUp('.marquee', { duration: 0.6 });
+
+    // Brain list stagger
+    gsap.set('.brain', { opacity: 0, y: 20 });
+    gsap.to('.brain', {
+      opacity: 1, y: 0, duration: 0.6, ease: 'power2.out', stagger: 0.07,
+      scrollTrigger: { trigger: '.brain-list', start: 'top 80%', once: true }
+    });
+
+    // ── Hotkey key press animation (loops) ───────────────
+    const tl = gsap.timeline({ repeat: -1, repeatDelay: 1.2 });
+    tl.to('[data-key="ctrl"]',  { duration: 0.18, className: '+=pressed' })
+      .to('[data-key="ctrl"]',  { duration: 0.18, className: '-=pressed' }, '+=0.05')
+      .to('[data-key="shift"]', { duration: 0.18, className: '+=pressed' })
+      .to('[data-key="shift"]', { duration: 0.18, className: '-=pressed' }, '+=0.05')
+      .to('[data-key="h"]',     { duration: 0.18, className: '+=pressed' })
+      .to('[data-key="h"]',     { duration: 0.22, className: '-=pressed' }, '+=0.1');
+
+    // ── Mood switcher (cycles through 7 states) ──────────
+    const moods = gsap.utils.toArray('.mood');
+    let moodIdx = 0;
+    setInterval(() => {
+      moods.forEach(m => m.classList.remove('active'));
+      moodIdx = (moodIdx + 1) % moods.length;
+      moods[moodIdx].classList.add('active');
+    }, 1400);
+
+    // ── Active nav link as you scroll ────────────────────
+    const navLinks = gsap.utils.toArray('.nav-links a');
+    const sectionIds = ['cat', 'hotkey', 'chat', 'brain', 'install'];
+
+    sectionIds.forEach((id) => {
+      const link = document.querySelector(`.nav-links a[href="#${id}"]`);
+      if (!link) return;
+      ScrollTrigger.create({
+        trigger: `#${id}`,
+        start: 'top 40%',
+        end: 'bottom 40%',
+        onEnter:    () => navLinks.forEach(l => l.classList.remove('active')),
+        onEnterBack: () => navLinks.forEach(l => l.classList.remove('active')),
+        onUpdate: (self) => {
+          if (self.isActive) link.classList.add('active');
+        }
+      });
+    });
+
+    window.addEventListener('load', () => ScrollTrigger.refresh());
+  </script>
+</body>
+</html>
