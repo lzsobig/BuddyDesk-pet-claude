@@ -32,15 +32,7 @@ from theme import (
     BTN_HEIGHT_PRIMARY, BTN_HEIGHT_SECONDARY, INPUT_HEIGHT,
 )
 
-API_PRESETS = {
-    "OpenAI": {"base": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
-    "DeepSeek": {"base": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
-    "NVIDIA": {"base": "https://integrate.api.nvidia.com/v1", "model": "meta/llama-3.1-8b-instruct"},
-    "Ollama (本地)": {"base": "http://localhost:11434/v1", "model": "llama3"},
-    "硅基流动": {"base": "https://api.siliconflow.cn/v1", "model": "Qwen/Qwen2.5-7B-Instruct"},
-    "Moonshot": {"base": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k"},
-    "自定义": {"base": "", "model": ""},
-}
+API_PRESETS = config.API_PRESETS
 
 # Resolve asset directory once so _BackendCard can find the SVGs regardless
 # of the current working directory at import time.
@@ -315,6 +307,7 @@ class LauncherDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.result_config = None
+        self._discovered_claude_path = None
         self._setup_ui()
         self._load_saved()
         QTimer.singleShot(500, self._check_claude)
@@ -609,13 +602,34 @@ class LauncherDialog(QDialog):
         self._mascot._float.start()
 
     def _check_claude(self):
-        # Run the CLI version check. shell=True on Windows so npm-global
-        # .cmd shims resolve correctly. 5s timeout so a hung CLI doesn't
-        # stall the launcher UI.
+        # First try to find claude CLI via PATH or common locations
+        import shutil
+        claude_exe = shutil.which("claude")
+        if not claude_exe:
+            # Check common npm global paths that may not be in PATH
+            candidates = [
+                r"C:\npm-global\claude.cmd",
+                os.path.expanduser(r"~\AppData\Roaming\npm\claude.cmd"),
+                os.path.expanduser(r"~\.npm-global\bin\claude"),
+                "/usr/local/bin/claude",
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    claude_exe = c
+                    break
+
+        if not claude_exe:
+            self._mark_claude_missing()
+            return
+
+        # Run version check with the resolved path
         try:
+            kwargs = dict(capture_output=True, text=True, timeout=5, shell=True)
+            # Suppress CMD window flash on Windows
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
             r = subprocess.run(
-                ["claude", "--version"],
-                capture_output=True, text=True, timeout=5, shell=True,
+                [claude_exe, "--version"], **kwargs,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             self._mark_claude_missing()
@@ -626,10 +640,9 @@ class LauncherDialog(QDialog):
             self.claude_badge.setText(f"已安装: {ver}")
             self.claude_badge.setStyleSheet(self._badge_style(GREEN_SOFT, GREEN))
             self.claude_hint.setVisible(False)
+            # Update config so the backend uses the correct path
+            self._discovered_claude_path = claude_exe
         else:
-            # Non-zero exit usually means a broken install or auth issue.
-            # Treat it as "not installed" from the launcher's POV — the user
-            # will see the real error the moment they try to chat.
             self._mark_claude_missing()
 
     def _mark_claude_missing(self):
@@ -638,6 +651,10 @@ class LauncherDialog(QDialog):
             self._badge_style("rgba(212,122,114,0.08)", RED)
         )
         self.claude_hint.setVisible(True)
+        # Auto-switch to API backend so the user isn't stuck on a disabled option
+        if self.claude_radio.isChecked():
+            self.openai_radio.setChecked(True)
+            self._on_backend()
 
     def _on_backend(self):
         is_claude = self.claude_radio.isChecked()
@@ -672,14 +689,16 @@ class LauncherDialog(QDialog):
             "openai_api_key": self.api_key_input.text().strip(),
             "openai_api_base": self.base_url_input.text().strip() or config.DEFAULT_API_BASE,
             "openai_model": self.model_input.text().strip() or config.DEFAULT_MODEL,
-            "claude_cli_path": config.CLAUDE_CLI_PATH,
+            "claude_cli_path": self._discovered_claude_path or config.CLAUDE_CLI_PATH,
             "pet_name": self.pet_name_input.text().strip() or "小橘",
             "island_enabled": True,
             "pet_enabled": True,           # P0 fix: was hard-coded False
             "chat_enabled": True,
         }
-        config.save_user_config(cfg)
-        self.result_config = cfg
+        # Merge with existing saved config to preserve sound/font/clipboard settings
+        merged = config._deep_merge(config.load_user_config(), cfg)
+        config.save_user_config(merged)
+        self.result_config = merged
         self.accept()
 
     # ── drag support ──

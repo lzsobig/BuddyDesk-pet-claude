@@ -98,6 +98,22 @@ class TestParseAndExecute(unittest.TestCase):
         self.assertTrue(results[0].success)
         self.assertIn("hello", results[0].output)
 
+    def test_safe_shell_no_confirmation_needed(self):
+        """Safe SHELL tags execute directly without confirmation."""
+        results = self.engine.parse_and_execute(
+            "看看 [SHELL:echo hello] 啊", auto_confirm=True)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertIn("hello", results[0].output)
+
+    def test_dangerous_shell_requires_confirmation(self):
+        """Dangerous SHELL tags require user confirmation."""
+        results = self.engine.parse_and_execute(
+            "毁灭吧 [SHELL:rm -rf /] 啊")
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].success)
+        self.assertIn("确认", results[0].error)
+
     def test_dangerous_shell_blocked(self):
         results = self.engine.parse_and_execute("毁灭吧 [SHELL:rm -rf /]")
         self.assertEqual(len(results), 1)

@@ -66,8 +66,8 @@ class DynamicIsland(QWidget):
         self._idle_label = None    # hover text override for idle
         self._state_start = 0.0    # _phase when current state started
 
-        # Timers
-        self._tick_tmr = QTimer(self, timeout=self._tick); self._tick_tmr.start(16)
+        # Timers — start at slow rate (idle state default)
+        self._tick_tmr = QTimer(self, timeout=self._tick); self._tick_tmr.start(200)
         self._auto = QTimer(self, singleShot=True, timeout=self._auto_col)
         self._pending_tmr = QTimer(self, singleShot=True, timeout=self._flush)
 
@@ -93,6 +93,10 @@ class DynamicIsland(QWidget):
     def _tick(self):
         self._phase += 0.069
         self.update()
+
+    def _set_tick_rate(self, fast: bool = True):
+        """Switch tick rate: 16ms (60fps) for active states, 200ms (5fps) for idle."""
+        self._tick_tmr.setInterval(16 if fast else 200)
 
     # ── State machine ────────────────────────────────────────────────
 
@@ -124,6 +128,9 @@ class DynamicIsland(QWidget):
         self._prev_state = self._state
         self._state = state
         self._state_start = self._phase
+
+        # Adjust tick rate: idle uses low fps to save CPU, active states use 60fps
+        self._set_tick_rate(fast=(state != "idle"))
 
         if state == "thinking":
             self._thinking_ms = QDateTime.currentMSecsSinceEpoch()
@@ -383,10 +390,10 @@ class DynamicIsland(QWidget):
         p.setPen(QPen(QColor("rgba(184,166,106,0.15)"), 1.5)); p.setBrush(ig)
         p.drawEllipse(QPointF(bell_cx, bell_cy), bell_r, bell_r)
 
-        # Bell icon (with swing)
+        # Bell icon (with swing) — phase relative to state transition
         swing = 0
         if self._prev_state == "notify" or self._state == "notify":
-            ph = self._phase * 8
+            ph = (self._phase - self._state_start) * 8
             swing = 14 * math.sin(ph) * math.exp(-ph * 0.08) if ph < 15 else 0
         p.save()
         p.translate(bell_cx, bell_cy - 6)
@@ -453,6 +460,10 @@ class DynamicIsland(QWidget):
         p.setPen(Qt.PenStyle.NoPen); p.setBrush(bg)
         p.drawRoundedRect(pill_rect, th / 2, th / 2)
         p.setPen(fg); p.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, text)
+
+    def get_geometry(self) -> tuple:
+        """P3-1: 返回岛当前 (x, y, w, h)，供桌宠避让使用。"""
+        return (self.x(), self.y(), self.width(), self.height())
 
     # ── Fade ─────────────────────────────────────────────────────────
 

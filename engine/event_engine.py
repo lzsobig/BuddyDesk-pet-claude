@@ -63,6 +63,7 @@ class EventEngine:
         self._running_job = None
         self._max_id = max((j.get("id", 0) for j in self.jobs), default=0)
         self._load_events()
+        self._saved_count = len(self.events)  # P1-3: track how many events are persisted
 
     def record(self, event_type: str, data: dict = None):
         """Record a new event."""
@@ -72,8 +73,10 @@ class EventEngine:
             self.events.append(event)
             if len(self.events) > config.MAX_EVENT_HISTORY:
                 self.events = self.events[-config.MAX_EVENT_HISTORY:]
+            # P1-3: save inside the lock to prevent concurrent writes
+            self._save_events()
 
-        # Fire registered callbacks
+        # Fire registered callbacks (outside lock to avoid deadlocks)
         callbacks = self._callbacks.get(event_type, [])
         for cb in callbacks:
             try:
@@ -87,8 +90,6 @@ class EventEngine:
                 self._on_event(event_type, event.data if hasattr(event, 'data') else {})
             except Exception as e:
                 logger.warning("Global event callback error: %s", e)
-
-        self._save_events()
 
     def on(self, event_type: str, callback):
         """Register a callback for an event type."""
@@ -215,19 +216,33 @@ class EventEngine:
                                 event = Event(data.get("type", ""), data.get("data", {}))
                                 event.timestamp = data.get("timestamp", "")
                                 self.events.append(event)
-                            except json.JSONDecodeError:
-                                pass
+                            except json.JSONDecodeError as exc:
+                                logger.debug("Skipping malformed event line: %s", exc)
                 # Keep only recent
                 self.events = self.events[-config.MAX_EVENT_HISTORY:]
             except IOError:
-                pass
+                logger.debug("No event log file at %s", config.EVENT_LOG_FILE)
 
     def _save_events(self):
-        """Persist events to log file."""
+        """Persist events to log file (append mode, incremental).
+
+        P1-3: uses self._saved_count to track how many events have been
+        written, avoiding repeated file-line counting. Called inside _lock.
+        """
         try:
             os.makedirs(os.path.dirname(config.EVENT_LOG_FILE), exist_ok=True)
-            with open(config.EVENT_LOG_FILE, "w", encoding="utf-8") as f:
-                for event in self.events[-config.MAX_EVENT_HISTORY:]:
-                    f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+            # Append only new events since last save
+            new_events = self.events[self._saved_count:]
+            if new_events:
+                with open(config.EVENT_LOG_FILE, "a", encoding="utf-8") as f:
+                    for event in new_events:
+                        f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+                self._saved_count = len(self.events)
+            # If log grew beyond max, rewrite trimmed version
+            if len(self.events) > config.MAX_EVENT_HISTORY:
+                with open(config.EVENT_LOG_FILE, "w", encoding="utf-8") as f:
+                    for event in self.events[-config.MAX_EVENT_HISTORY:]:
+                        f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+                self._saved_count = len(self.events)
         except IOError as e:
             logger.warning("Failed to save events: %s", e)

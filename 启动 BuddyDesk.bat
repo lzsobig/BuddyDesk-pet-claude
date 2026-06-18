@@ -14,6 +14,20 @@ if not errorlevel 1 (
     set "PY=python"
     goto :found
 )
+REM Check common install paths
+for %%P in (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+    "C:\Python312\python.exe"
+    "C:\Python311\python.exe"
+    "C:\Python310\python.exe"
+) do (
+    if exist %%P (
+        set "PY=%%~P"
+        goto :found
+    )
+)
 echo [ERROR] Python 3.10+ not found. Install from https://python.org
 echo Make sure to check "Add Python to PATH".
 pause

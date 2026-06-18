@@ -27,9 +27,27 @@ Thumbs.db
 
 # Project specific
 user_config.json
+events.log
 .deps_installed
+templates/
+
+# Build output
+build/
+dist/
+*.spec
 
 # Launcher screenshots (keep sprite assets)
 launcher-screenshot.png
 launcher-v2.png
 launcher-v3.png
+
+# P0-6: Obsidian vault / dev scripts / stray files
+.obsidian/
+*.canvas
+ass/
+_screenshot_*.py
+find_window.ps1
+minimize_clutter.ps1
+restore_windows.ps1
+*.ps1
+!启动 BuddyDesk.vbs

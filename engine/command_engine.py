@@ -11,13 +11,18 @@ Command Engine - 命令解析与执行引擎
 import os
 import sys
 import json
+import shlex
 import subprocess
 import threading
 import re
 import shutil
 from datetime import datetime
+from typing import Optional
 
 import config
+
+# Suppress CMD window flash on Windows
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def _read_lnk_target(lnk_path: str) -> str:
@@ -159,6 +164,28 @@ class AppRegistry:
         "figma": [r"Figma", "Figma.exe"],
         "photoshop": [r"Adobe\Adobe Photoshop*", "Photoshop.exe"],
         "ps": [r"Adobe\Adobe Photoshop*", "Photoshop.exe"],
+
+        # Chinese apps — commonly used on Chinese Windows installs
+        "wps": [r"Kingsoft\WPS Office\*", "wps.exe"],
+        "wps office": [r"Kingsoft\WPS Office\*", "wps.exe"],
+        "百度网盘": [r"Baidu\BaiduNetdisk", "BaiduNetdisk.exe"],
+        "百度云": [r"Baidu\BaiduNetdisk", "BaiduNetdisk.exe"],
+        "迅雷": [r"Thunder Network\Thunder\Program", "Thunder.exe"],
+        "网易云音乐": [r"Netease\CloudMusic", "cloudmusic.exe"],
+        "网易云": [r"Netease\CloudMusic", "cloudmusic.exe"],
+        "企业微信": [r"Tencent\WXWork", "WXWork.exe"],
+        "腾讯会议": [r"Tencent\WeMeet", "wemeetapp.exe"],
+        "搜狗输入法": [r"SogouInput\*", "SGTool.exe"],
+        # Additional Chinese apps
+        "哔哩哔哩": [r"哔哩哔哩\*" , "bilibili.exe"],
+        "bilibili": [r"哔哩哔哩\*", "bilibili.exe"],
+        "b站": [r"哔哩哔哩\*", "bilibili.exe"],
+        "腾讯视频": [r"Tencent\TVPlus\*", "qqlive.exe"],
+        "爱奇艺": [r"iQIYI\*", "iQIYIWidget.exe"],
+        "阿里云盘": [r"Alibaba\Aliyunpan", "Aliyunpan.exe"],
+        "微博": [r"Sina\Weibo\*", "Weibo.exe"],
+        "有道词典": [r"NetEase\YoudaoDict", "YoudaoDict.exe"],
+        "有道翻译": [r"NetEase\YoudaoDict", "YoudaoDict.exe"],
     }
 
     # macOS apps (for cross-platform support)
@@ -214,10 +241,11 @@ class AppRegistry:
         else:
             return cls._find_linux_app(name_lower)
 
-    @classmethod
-    def _find_windows_app(cls, name: str) -> str:
-        """Find app on Windows."""
-        # Special commands
+    # -- Helper lookup methods for _find_windows_app --
+
+    @staticmethod
+    def _find_via_special(name: str) -> Optional[str]:
+        """Check the built-in special commands dict (cmd, calc, explorer …)."""
         specials = {
             "cmd": "cmd",
             "powershell": "powershell",
@@ -229,34 +257,41 @@ class AppRegistry:
             "notepad": "notepad",
             "记事本": "notepad",
         }
-        if name in specials:
-            return specials[name]
+        return specials.get(name)
 
-        # Look up in registry
-        if name in cls.WINDOWS_APPS and cls.WINDOWS_APPS[name] is not None:
-            subpath, exe = cls.WINDOWS_APPS[name]
-            # Try Program Files
-            for program_files in [
-                os.environ.get("ProgramFiles", "C:\\Program Files"),
-                os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
-                os.environ.get("LOCALAPPDATA", ""),  # Some apps install here
-            ]:
-                if not program_files:
-                    continue
-                # Handle wildcards
-                if "*" in subpath:
-                    import glob
-                    matches = glob.glob(os.path.join(program_files, subpath))
-                    for match in matches:
-                        full_path = os.path.join(match, exe)
-                        if os.path.exists(full_path):
-                            return f'"{full_path}"'
-                else:
-                    full_path = os.path.join(program_files, subpath, exe)
+    @classmethod
+    def _find_via_registry(cls, name: str) -> Optional[str]:
+        """Look up *name* in WINDOWS_APPS and search Program Files / LocalAppData."""
+        if name not in cls.WINDOWS_APPS or cls.WINDOWS_APPS[name] is None:
+            return None
+        subpath, exe = cls.WINDOWS_APPS[name]
+        for program_files in [
+            os.environ.get("ProgramFiles", "C:\\Program Files"),
+            os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+            os.environ.get("LOCALAPPDATA", ""),
+        ]:
+            if not program_files:
+                continue
+            if "*" in subpath:
+                import glob
+                matches = glob.glob(os.path.join(program_files, subpath))
+                for match in matches:
+                    full_path = os.path.join(match, exe)
                     if os.path.exists(full_path):
                         return f'"{full_path}"'
+            else:
+                full_path = os.path.join(program_files, subpath, exe)
+                if os.path.exists(full_path):
+                    return f'"{full_path}"'
+        return None
 
-        # Chinese → English alias lookup so we can match Start Menu shortcuts.
+    @staticmethod
+    def _find_via_aliases(name: str) -> list[str]:
+        """Return the list of search keys (alias + original) for Start Menu matching.
+
+        Chinese names are mapped to English equivalents so .lnk shortcut
+        filenames can be matched.  If no alias exists, returns ``[name]``.
+        """
         alias = {
             "微信": "wechat",
             "谷歌浏览器": "chrome",
@@ -271,16 +306,12 @@ class AppRegistry:
             "音乐": "spotify",
             "播放器": "vlc",
         }.get(name, name)
+        return [alias, name] if alias != name else [name]
 
-        # Also try the original name verbatim (in case the Start Menu entry
-        # is named in the same language the user asked for, e.g. the
-        # Chinese 微信 .lnk file). Whichever string is a substring of the
-        # shortcut name wins.
-        search_keys = [alias, name] if alias != name else [name]
-
-        # Try the Start Menu shortcut — many Windows apps (e.g. 微信) only
-        # install a Start Menu entry, no Program Files dir. We extract the
-        # target .exe from the .lnk file. We prefer real .exe over Uninstall.
+    @classmethod
+    def _find_via_start_menu(cls, name: str) -> Optional[str]:
+        """Search Start Menu .lnk shortcuts for a matching application."""
+        search_keys = cls._find_via_aliases(name)
         try:
             import glob
             start_dirs = [
@@ -294,9 +325,6 @@ class AppRegistry:
                 for lnk in glob.glob(os.path.join(d, "**", "*.lnk"), recursive=True):
                     base = os.path.splitext(os.path.basename(lnk))[0]
                     base_lower = base.lower()
-                    # Require the search key to be a substring of the shortcut
-                    # name. The reverse direction is unsafe (wechat in
-                    # wechatminiprogram would match the wrong .exe).
                     matched = any(
                         len(k) >= 2 and k in base_lower for k in search_keys
                     )
@@ -305,7 +333,6 @@ class AppRegistry:
                     target = _read_lnk_target(lnk)
                     if not target or not os.path.exists(target):
                         continue
-                    # Prefer non-Uninstall executables
                     if "uninstall" in target.lower():
                         candidates.append((5, target))
                     else:
@@ -315,28 +342,60 @@ class AppRegistry:
                     return f'"{candidates[0][1]}"'
         except Exception:
             pass
+        return None
 
-        # Try `where` (PATH lookup)
+    @staticmethod
+    def _find_via_path(name: str) -> Optional[str]:
+        """Try ``where <name>`` to find the executable on PATH."""
         try:
             result = subprocess.run(
                 ["where", name],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
+                creationflags=_NO_WINDOW,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip().split("\n")[0]
         except Exception:
             pass
+        return None
 
-        # Final fallback: Windows `start` searches Start Menu + Apps & Features
-        return f'start "" "{name}"'
+    # -- Main orchestrator --
+
+    @classmethod
+    def _find_windows_app(cls, name: str) -> str:
+        """Find app on Windows.
+
+        Tries each lookup strategy in priority order and returns the first
+        match.  Falls back to a sanitized ``start`` command when nothing is
+        found.
+        """
+        for finder in (
+            cls._find_via_special,
+            cls._find_via_registry,
+            cls._find_via_start_menu,
+            cls._find_via_path,
+        ):
+            result = finder(name)
+            if result is not None:
+                return result
+
+        # Final fallback: sanitize name to prevent shell injection via
+        # metacharacters (P0-1b).
+        safe_name = name
+        for ch in ('"', '&', '|', ';', '^', '<', '>', '%', '!'):
+            safe_name = safe_name.replace(ch, '')
+        return f'start "" "{safe_name}"'
 
     @classmethod
     def _find_macos_app(cls, name: str) -> str:
         """Find app on macOS."""
         if name in cls.MACOS_APPS:
             app_name = cls.MACOS_APPS[name]
-            return f'open -a "{app_name}"'
-        return f'open -a "{name}"'
+        else:
+            app_name = name
+        # Sanitize to prevent shell injection
+        safe_name = app_name.replace('"', '').replace('&', '').replace(';', '')
+        return f'open -a "{safe_name}"'
 
     @classmethod
     def _find_linux_app(cls, name: str) -> str:
@@ -358,9 +417,13 @@ class CommandEngine:
     # Order matters — broader / higher-risk patterns first.
     DANGEROUS_PATTERNS = [
         # Filesystem destruction
-        r"\brm\s+-rf?\b",
+        r"\brm\s+-[a-zA-Z]*[rf]",               # rm with -r or -f (any combo)
+        r"\brm\s+--recursive",
+        r"\brm\s+--force",
         r"\brmdir\s+/[sS]\b",
+        r"\brd\s+/[sS]\b",                          # rd alias for rmdir
         r"\bdel\s+/[fFsSQq]",
+        r"\bdel\s+/",                                # del with any flag
         r"\bdelete\b",
         r"\berase\b",
         r"\bformat\b",
@@ -370,6 +433,7 @@ class CommandEngine:
         r"\breboot\b",
         r"\bpoweroff\b",
         r"\bhalt\b",
+        r"\blogoff\b",
         # User / process kill
         r"\btaskkill\s+/[fF]",
         r"\bstop-process\b",
@@ -377,21 +441,52 @@ class CommandEngine:
         r"\bkillall\b",
         r"\bnet\s+user\b",
         r"\bnet\s+localgroup\b",
+        r"\bnet\s+share\b",
+        r"\bnet\s+use\b",
         # Registry / system
-        r"\breg\s+delete\b",
+        r"\breg\s+(delete|add)\b",
         r"\bsc\s+(delete|stop)\b",
         r"\bbcdedit\b",
         r"\bdiskpart\b",
         r"\bcipher\s+/w\b",
+        r"\bicacls\b",
+        r"\btakeown\b",
+        r"\bschtasks\s+/create\b",
         # PowerShell destructive cmdlets
         r"\bremove-item\b",
         r"\bclear-content\b",
         r"\bremove-variable\b",
+        r"\binvoke-expression\b",
+        r"\biex\b",
+        r"\bstart-process\b",
+        r"\bpowershell\b.*-enc(odedcommand)?\b",    # base64-encoded payloads
+        # Script hosts that can execute arbitrary code
+        r"\bwscript\b",
+        r"\bcscript\b",
+        r"\bmshta\b",
+        r"\bcertutil\b.*-urlcache",
+        r"\bbitsadmin\b.*/transfer",
         # Redirectors / pipes that can fan out
         r"\|\s*(?:sh|bash|cmd|powershell|invoke-expression|iex)\b",
         r"\bcurl\b.*\|\s*(?:sh|bash)",
         # Command chaining that defeats single-line check
         r"[;&|]{1,2}\s*(?:rm|del|format|reg\s+delete|remove-item)\b",
+        # P0-1b: additional dangerous patterns (bypass techniques)
+        r"\bpython\s+-c\b",                    # python -c "import os;os.system(...)"
+        r"\bpython3?\s+-m\s+subprocess\b",     # python -m subprocess
+        r"\bcmd\s+/c\b",                       # cmd /c "arbitrary command"
+        r"\bcmd\s+/k\b",                       # cmd /k (keeps window open)
+        r"\bmsiexec\b",                        # MSI installer
+        r"\bcertutil\s+-decode\b",             # certutil decode (file drop)
+        r"\bcertutil\s+-urlcache\b",           # certutil URL download
+        r"\bbitsadmin\b",                      # BITS download (already partial)
+        r"\brundll32\b",                       # DLL loading
+        r"\bregsvr32\b",                       # COM registration
+        r"\bmsconfig\b",                       # system config
+        r"\bnetsh\b",                          # network shell
+        r"\bftp\b",                            # FTP client
+        r"\btftp\b",                           # trivial FTP
+        r"\battrib\s+[+-][shr]",              # attrib hide/unhide system files
     ]
 
     def __init__(self, event_engine=None):
@@ -430,16 +525,20 @@ class CommandEngine:
             result = self.open_app(app_name)
             results.append(result)
 
-        # Execute direct commands
+        # Execute direct commands — P0-1a: always require confirmation
+        # for [CMD:] tags (user must explicitly confirm)
         for cmd in cmd_matches:
             cmd = cmd.strip()
-            result = self.execute_command(cmd, auto_confirm=auto_confirm)
+            result = self.execute_command(cmd, auto_confirm=auto_confirm,
+                                          force_confirm=True)
             results.append(result)
 
-        # Execute shell commands
+        # Execute shell commands — P0-1a: dangerous commands require
+        # confirmation; safe shell commands execute directly
         for cmd in shell_matches:
             cmd = cmd.strip()
-            result = self.execute_shell(cmd, auto_confirm=auto_confirm)
+            result = self.execute_shell(cmd, auto_confirm=auto_confirm,
+                                        force_confirm=False)
             results.append(result)
 
         # Execute Claude Code commands
@@ -476,9 +575,30 @@ class CommandEngine:
 
         try:
             if sys.platform == "win32":
-                # Use subprocess with shell=True for Windows
-                subprocess.Popen(cmd, shell=True)
+                # Try shell=False first for safety; fall back to shell=True
+                # only for commands that genuinely need the shell (start, cmd,
+                # explorer, calc, and other built-in shell commands).
+                _needs_shell = (
+                    cmd.startswith("start ")
+                    or cmd in ("cmd", "explorer", "calc", "notepad",
+                               "snippingtool", "powershell")
+                )
+                if not _needs_shell:
+                    # Extract executable from quoted path (e.g. '"C:\...\app.exe"')
+                    exe_path = cmd.strip().strip('"')
+                    subprocess.Popen(
+                        [exe_path],
+                        shell=False,
+                        creationflags=_NO_WINDOW,
+                    )
+                else:
+                    subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        creationflags=_NO_WINDOW,
+                    )
             else:
+                # macOS/Linux: 'open -a' and bare commands need the shell
                 subprocess.Popen(cmd, shell=True)
 
             if self.event_engine:
@@ -503,35 +623,99 @@ class CommandEngine:
                 error=f"打开应用失败: {e}",
             )
 
-    def execute_command(self, cmd: str, auto_confirm: bool = False) -> CommandResult:
+    def execute_command(self, cmd: str, auto_confirm: bool = False,
+                        force_confirm: bool = False) -> CommandResult:
         """Execute a system command.
 
         Args:
             cmd: Command to execute
             auto_confirm: Skip confirmation for dangerous commands
+            force_confirm: Always require confirmation (for [SHELL:]/[CMD:] tags)
 
         Returns:
             CommandResult with execution status
         """
-        # Check for dangerous commands
-        if not auto_confirm and self._is_dangerous(cmd):
+        # P0-1a: [SHELL:]/[CMD:] tags always require confirmation unless
+        # the caller explicitly set auto_confirm (e.g. user replied "确认执行").
+        is_dangerous = self._is_dangerous(cmd)
+        if not auto_confirm and (force_confirm or is_dangerous):
             self._pending_confirmation = cmd
+            if is_dangerous:
+                return CommandResult(
+                    success=False,
+                    command=cmd,
+                    error="⚠️ 危险命令，需要确认才能执行。请在聊天中回复'确认执行'。",
+                )
             return CommandResult(
                 success=False,
                 command=cmd,
-                error="⚠️ 危险命令，需要确认才能执行。请在聊天中回复'确认执行'。",
+                error="🔒 命令需要确认才能执行。请在聊天中回复'确认执行'。",
             )
 
         try:
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                encoding="utf-8",
-                errors="replace",
+            # Use shell=False for safety. Parse with shlex.split() to
+            # handle quoted arguments. Fall back to shell=True only when
+            # the command contains shell-specific syntax that shlex cannot
+            # handle (pipes, redirects, env variable expansion, etc.).
+            _shell_specials = set('|><&^')
+            _needs_shell = (
+                any(c in cmd for c in _shell_specials)
+                or '$' in cmd
+                or '`' in cmd
             )
+            if _needs_shell:
+                result = subprocess.run(
+                    cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=_NO_WINDOW,
+                )
+            else:
+                try:
+                    args = shlex.split(cmd, posix=False)
+                except ValueError:
+                    args = None
+
+                if args is not None:
+                    try:
+                        result = subprocess.run(
+                            args,
+                            shell=False,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            encoding="utf-8",
+                            errors="replace",
+                            creationflags=_NO_WINDOW,
+                        )
+                    except FileNotFoundError:
+                        # Windows shell builtins (echo, dir, etc.) are not
+                        # standalone executables — fall back to cmd /c.
+                        result = subprocess.run(
+                            cmd,
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            encoding="utf-8",
+                            errors="replace",
+                            creationflags=_NO_WINDOW,
+                        )
+                else:
+                    result = subprocess.run(
+                        cmd,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=_NO_WINDOW,
+                    )
 
             output = result.stdout + result.stderr
             success = result.returncode == 0
@@ -571,9 +755,11 @@ class CommandEngine:
                 error=f"执行失败: {e}",
             )
 
-    def execute_shell(self, cmd: str, auto_confirm: bool = False) -> CommandResult:
+    def execute_shell(self, cmd: str, auto_confirm: bool = False,
+                      force_confirm: bool = False) -> CommandResult:
         """Execute a shell command (alias for execute_command)."""
-        return self.execute_command(cmd, auto_confirm)
+        return self.execute_command(cmd, auto_confirm=auto_confirm,
+                                    force_confirm=force_confirm)
 
     def execute_claude_code(self, instruction: str) -> CommandResult:
         """Execute a command via Claude Code CLI.
@@ -595,6 +781,7 @@ class CommandEngine:
                 timeout=120,
                 encoding="utf-8",
                 errors="replace",
+                creationflags=_NO_WINDOW,
             )
 
             output = result.stdout.strip()
@@ -660,10 +847,15 @@ class CommandEngine:
         """Try to parse natural language commands.
 
         Detects patterns like:
-        - "打开微信"
-        - "open Chrome"
-        - "启动 VS Code"
-        - "运行 python script.py"
+        - "打开微信"         -> open_app (safe, app lookup only)
+        - "启动 VS Code"     -> open_app (safe, app lookup only)
+        - "open Chrome"      -> open_app (safe, app lookup only)
+        - "运行 python script.py" -> execute_command with confirmation
+        - "run some_command"  -> execute_command with confirmation
+
+        The "运行/run" patterns route through execute_command so the
+        existing dangerous-command detection and confirmation flow
+        are applied before anything is executed.
 
         Args:
             text: User/AI message text
@@ -673,33 +865,42 @@ class CommandEngine:
         """
         text = text.strip()
 
-        # Chinese patterns
-        cn_patterns = [
-            r"打开(\S+)",          # 打开微信
-            r"启动(\S+)",          # 启动Chrome
-            r"运行(\S+)",          # 运行python
-            r"开启(\S+)",          # 开启Terminal
+        # --- Safe app-launch patterns (open_app path) ---
+        safe_cn = [
+            (r"打开(\S+)", 1),    # 打开微信
+            (r"启动(\S+)", 1),    # 启动Chrome
+            (r"开启(\S+)", 1),    # 开启Terminal
         ]
-
-        for pattern in cn_patterns:
+        for pattern, group in safe_cn:
             match = re.search(pattern, text)
             if match:
-                app_name = match.group(1)
-                return self.open_app(app_name)
+                return self.open_app(match.group(group))
 
-        # English patterns
-        en_patterns = [
-            r"open\s+(\S+)",
-            r"launch\s+(\S+)",
-            r"start\s+(\S+)",
-            r"run\s+(\S+)",
+        safe_en = [
+            (r"open\s+(\S+)", 1),
+            (r"launch\s+(\S+)", 1),
         ]
-
-        for pattern in en_patterns:
+        for pattern, group in safe_en:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                app_name = match.group(1)
-                return self.open_app(app_name)
+                return self.open_app(match.group(group))
+
+        # --- Execution patterns (require confirmation) ---
+        exec_cn = [
+            (r"运行\s+(.+)$", 1),  # 运行python script.py (greedy to capture full command)
+        ]
+        exec_en = [
+            (r"run\s+(.+)$", 1),   # run python script.py
+            (r"start\s+(.+)$", 1), # start some_command
+        ]
+
+        for pattern, group in exec_cn + exec_en:
+            match = re.search(pattern, text)
+            if match:
+                cmd = match.group(group).strip()
+                # Route through execute_command which applies
+                # dangerous-command detection and confirmation.
+                return self.execute_command(cmd, force_confirm=True)
 
         return None
 

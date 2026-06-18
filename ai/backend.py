@@ -17,6 +17,9 @@ import threading
 import os
 import sys
 from abc import ABC, abstractmethod
+
+# Suppress CMD window flash on Windows for all subprocess calls
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 from typing import Callable, Optional
 
 import config
@@ -78,6 +81,29 @@ SYSTEM_PROMPT = """你是 BuddyDesk，一个 Windows 桌面 AI 助手。你不�
 5. 回复要简短有趣，不要长篇大论
 6. 可以适当使用 emoji 增加趣味性
 7. 当用户只是闲聊时，不需要添加任何命令标签
+
+### 5. 任务规划派发（P3-4）
+当用户说"帮我列一下今天要做的事"、"派几个任务"、"做个 todo 列表"或类似请求时，
+在回复末尾输出一个 ```` ```tasks ```` YAML 块，客户端会自动渲染为可操作卡片：
+
+```tasks
+- title: 修复登录页面的样式错位
+  mode: claude_code
+  difficulty: 2
+- title: 写一份本周工作周报
+  mode: openai
+  difficulty: 1
+- title: 把 README 翻译成英文
+  mode: claude_code
+  difficulty: 3
+```
+
+每个任务的字段：
+- title（必填）：任务标题，简短
+- mode（选填，默认 claude_code）：claude_code / openai / shell
+- difficulty（选填，1-5，默认 1）：难度等级
+
+用户可以为每个任务点 3 个按钮：📌 Pin 到桌面 / 🤖 让 AI 做（自动派发）/ ✗ 跳过。
 """
 
 
@@ -91,7 +117,8 @@ def _find_claude_cli(cli_path: str = None) -> str:
         if os.path.exists(cli_path):
             return cli_path
 
-    # shutil.which finds .cmd/.bat on Windows when shell=True is used
+    # shutil.which finds .cmd/.bat on Windows; the caller needs to use
+    # shell=True when executing .cmd/.bat files on Windows.
     found = shutil.which("claude")
     if found:
         return found
@@ -107,6 +134,16 @@ def _find_claude_cli(cli_path: str = None) -> str:
             return c
 
     return ""
+
+
+def _needs_shell_for_cli(cli_path: str) -> bool:
+    """Return True when shell=True is needed to execute the given CLI path.
+
+    On Windows, .cmd/.bat files must be executed through cmd.exe
+    (i.e. subprocess with shell=True) because they are batch scripts,
+    not native executables.
+    """
+    return sys.platform == "win32" and cli_path.lower().endswith((".cmd", ".bat"))
 
 
 class AIBackend(ABC):
@@ -139,7 +176,7 @@ class ClaudeCodeBackend(AIBackend):
                  model: str = None):
         self.cli_path = _find_claude_cli(cli_path) or "claude"
         self.working_dir = working_dir or os.path.expanduser("~")
-        self.model = model or "claude-sonnet-4-20250514"
+        self.model = model  # P0-2: no hardcoded model; None lets CLI use its default
         self._cancel_event = threading.Event()
         self._process = None
 
@@ -160,10 +197,15 @@ class ClaudeCodeBackend(AIBackend):
         # Try streaming first; on any error, fall back to non-streaming
         # but surface the streaming error in logs instead of swallowing it.
         stream_error: str | None = None
+        # P0-2: only pass --model when explicitly set (None = CLI default)
+        cli_args = [self.cli_path, "--print", "--output-format", "stream-json",
+                    "--verbose"]
+        if self.model:
+            cli_args.extend(["--model", self.model])
+        _use_shell = _needs_shell_for_cli(self.cli_path)
         try:
             self._process = subprocess.Popen(
-                [self.cli_path, "--print", "--output-format", "stream-json",
-                 "--verbose", "--model", self.model],
+                cli_args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -171,7 +213,8 @@ class ClaudeCodeBackend(AIBackend):
                 encoding="utf-8",
                 errors="replace",
                 cwd=self.working_dir,
-                shell=True,
+                shell=_use_shell,
+                creationflags=_NO_WINDOW,
             )
 
             self._process.stdin.write(prompt)
@@ -235,9 +278,12 @@ class ClaudeCodeBackend(AIBackend):
         # Fallback: non-streaming
         if stream_error:
             print(f"[ClaudeCode] streaming failed ({stream_error}); falling back to non-streaming")
+        fallback_args = [self.cli_path, "--print"]
+        if self.model:
+            fallback_args.extend(["--model", self.model])
         try:
             result = subprocess.run(
-                [self.cli_path, "--print", "--model", self.model],
+                fallback_args,
                 input=prompt,
                 capture_output=True,
                 text=True,
@@ -245,7 +291,8 @@ class ClaudeCodeBackend(AIBackend):
                 encoding="utf-8",
                 errors="replace",
                 cwd=self.working_dir,
-                shell=True,
+                shell=_use_shell,
+                creationflags=_NO_WINDOW,
             )
         except subprocess.TimeoutExpired:
             raise RuntimeError("Claude CLI request timed out (120s).")
@@ -275,9 +322,11 @@ class ClaudeCodeBackend(AIBackend):
 
     def is_available(self) -> bool:
         try:
+            _use_shell = _needs_shell_for_cli(self.cli_path)
             result = subprocess.run(
                 [self.cli_path, "--version"],
-                capture_output=True, text=True, timeout=5, shell=True,
+                capture_output=True, text=True, timeout=5, shell=_use_shell,
+                creationflags=_NO_WINDOW,
             )
             return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -358,8 +407,12 @@ class AnthropicDirectBackend(AIBackend):
     falls back to https://api.anthropic.com.
     """
 
-    DEFAULT_PROXY = "http://127.0.0.1:15721"
-    DEFAULT_MODEL = "mimo-v2.5"
+    DEFAULT_PROXY = ""
+    DEFAULT_MODEL = ""
+
+    # Class-level cache to avoid repeated API calls during startup
+    _availability_cache: dict[str, tuple[float, bool]] = {}
+    _CACHE_TTL = 60  # seconds
 
     def __init__(self, api_base: str = None, api_key: str = None, model: str = None):
         import os
@@ -446,6 +499,16 @@ class AnthropicDirectBackend(AIBackend):
         self._cancel_event.set()
 
     def is_available(self) -> bool:
+        import time
+        # P0-2: if no proxy/api_base configured, mark unavailable so
+        # create_backend falls back to ClaudeCodeBackend (CLI).
+        if not self.api_base or self.api_base == "://":
+            return False
+        cache_key = f"{self.api_base}:{self.model}"
+        cached = self._availability_cache.get(cache_key)
+        if cached and (time.monotonic() - cached[0]) < self._CACHE_TTL:
+            return cached[1]
+
         import requests
         try:
             resp = requests.post(
@@ -461,9 +524,12 @@ class AnthropicDirectBackend(AIBackend):
                 },
                 timeout=10,
             )
-            return resp.status_code == 200
+            result = resp.status_code == 200
         except Exception:
-            return False
+            result = False
+
+        self._availability_cache[cache_key] = (time.monotonic(), result)
+        return result
 
     def get_name(self) -> str:
         return f"Anthropic Direct ({self.model})"

@@ -3,6 +3,7 @@
 
 # Core
 openai>=1.0.0
+requests>=2.28.0
 
 # UI Framework
 PySide6>=6.6.0
@@ -12,6 +13,13 @@ Pillow>=10.0.0
 
 # Global Hotkeys
 pynput>=1.7.6
+
+# Voice Input (P3-6 / 闪电说迁移)
+sounddevice>=0.4.6        # 麦克风采集
+soundfile>=0.12.1         # WAV 加载（transcribe_wav_file 用）
+numpy>=1.24.0             # 音频缓冲
+onnxruntime>=1.16.0       # SenseVoice ONNX 推理（CPU）
+kaldi-native-fbank>=1.18  # fbank 特征提取
 
 # Testing
 pytest>=7.0.0

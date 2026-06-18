@@ -2,17 +2,25 @@
 System Tray — QSystemTrayIcon with context menu and status indicator.
 
 Icon is a rounder cat-face with whiskers rendered via QPainter.
-Menu includes Show/Hide Chat toggle and Quit.
+Menu includes Show/Hide Chat toggle, About, and Quit.
 """
 from PySide6.QtWidgets import QSystemTrayIcon, QMenu
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen, QFont
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen, QFont, QAction
 from PySide6.QtCore import Qt, QPointF
 
-from theme import GREEN, AMBER, RED, BG_CARD, TEXT_PRIMARY, ACCENT, BG_DEEP
+from theme import GREEN, AMBER, RED, BG_CARD, TEXT_PRIMARY, TEXT_MUTED, ACCENT, BG_DEEP
+import config
+
+
+# ── Pre-rendered icon cache ──────────────────────────────────────────────────
+_ICON_CACHE: dict[str, QIcon] = {}
 
 
 def _create_tray_icon(state: str = "idle") -> QIcon:
-    """Generate a polished cat-face tray icon with whiskers."""
+    """Generate a polished cat-face tray icon with whiskers (cached)."""
+    if state in _ICON_CACHE:
+        return _ICON_CACHE[state]
+
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
 
@@ -78,16 +86,19 @@ def _create_tray_icon(state: str = "idle") -> QIcon:
     p.drawLine(QPointF(27, 21), QPointF(31, 22))
 
     p.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _ICON_CACHE[state] = icon
+    return icon
 
 
 class SystemTray(QSystemTrayIcon):
     """System tray icon with status updates and context menu."""
 
-    def __init__(self, on_toggle_chat=None, on_quit=None, parent=None):
+    def __init__(self, on_toggle_chat=None, on_quit=None, on_settings=None, parent=None):
         super().__init__(parent)
         self.on_toggle_chat = on_toggle_chat
         self.on_quit = on_quit
+        self.on_settings = on_settings
         self._chat_visible = False
 
         self.setIcon(_create_tray_icon("idle"))
@@ -118,6 +129,14 @@ class SystemTray(QSystemTrayIcon):
         self._chat_action = menu.addAction("显示聊天窗口")
         self._chat_action.triggered.connect(self._toggle_chat)
 
+        self._settings_action = menu.addAction("设置")
+        self._settings_action.triggered.connect(self._open_settings)
+
+        menu.addSeparator()
+
+        about_action = menu.addAction("关于 BuddyDesk")
+        about_action.triggered.connect(self._show_about)
+
         menu.addSeparator()
 
         quit_action = menu.addAction("退出")
@@ -144,9 +163,22 @@ class SystemTray(QSystemTrayIcon):
         if self.on_toggle_chat:
             self.on_toggle_chat()
 
+    def _open_settings(self):
+        if self.on_settings:
+            self.on_settings()
+
     def _quit(self):
         if self.on_quit:
             self.on_quit()
+
+    def _show_about(self):
+        """Show a brief about message via tray notification."""
+        self.showMessage(
+            f"BuddyDesk v{config.APP_VERSION}",
+            "Windows 桌面 AI 伴侣\n灵动岛 · 像素橘猫 · 自然语言命令执行\n\n快捷键: Ctrl+Shift+H 呼出/隐藏聊天",
+            _create_tray_icon("idle"),
+            5000,
+        )
 
     def _on_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:

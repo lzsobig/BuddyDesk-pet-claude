@@ -12,8 +12,6 @@ BG_DEEP = "#f8f6f1"        # page background
 BG_PRIMARY = "#f8f6f1"     # alias
 BG_SUBTLE = "#f2efe9"       # subtle surfaces (input fields, badges)
 BG_CARD = "#ffffff"        # raised cards
-BG_CARD2 = "#ffffff"
-BG_CARD3 = "#e8e5dd"
 
 # ── Text hierarchy ──
 TEXT_PRIMARY = "#2a2a28"
@@ -70,6 +68,12 @@ RADIUS_SM = 10       # small chips, badges
 RADIUS_MD = 16       # cards, inputs, list items (was 14)
 RADIUS_LG = 22       # primary button (was 20)
 RADIUS_PILL = 9999
+
+# ── Animation tokens ──
+ANIM_FADE_MS = 200          # fade-in / fade-out duration
+ANIM_SPRING_MS = 450        # spring expand / collapse
+ANIM_EASING_SHOW = "OutCubic"
+ANIM_EASING_SPRING = "OutBack"
 
 # ── Sizing ──
 BTN_HEIGHT_PRIMARY = 48

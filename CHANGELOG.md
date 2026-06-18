@@ -5,7 +5,7 @@
 ### Breaking Changes
 - Renamed from "Hermes Pet Win" to **BuddyDesk**
 - Config directory moved from `~/.hermes_pet_win/` to `~/.buddydesk/`
-- Hotkey changed from `Ctrl+Shift+H` to `Ctrl+F`
+- Hotkey: `Ctrl+Shift+H` (unchanged, uses ctypes.GetAsyncKeyState)
 - Replaced `keyboard` library with `ctypes.GetAsyncKeyState` (no admin required)
 
 ### Features
