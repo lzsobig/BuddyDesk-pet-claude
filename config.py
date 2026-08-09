@@ -205,20 +205,21 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 def load_user_config() -> dict[str, Any]:
     """Load user configuration with deep merge against defaults.
 
-    Secret values that were base64-obfuscated on disk are transparently
-    decoded back to plaintext in memory.
+    Malformed files and malformed encoded secrets are treated as a reset to
+    defaults so a broken config can never prevent the launcher from opening.
     """
     _ensure_config_dir()
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-            # Decode obfuscated secret values
+            if not isinstance(saved, dict):
+                raise ValueError("config root must be an object")
             for k in list(saved.keys()):
                 if k in _SECRET_KEYS and isinstance(saved[k], str):
                     saved[k] = _decode_secret(saved[k])
             return _deep_merge(DEFAULT_USER_CONFIG, saved)
-        except (json.JSONDecodeError, IOError):
+        except (json.JSONDecodeError, UnicodeError, ValueError, TypeError, IOError):
             return copy.deepcopy(DEFAULT_USER_CONFIG)
     return copy.deepcopy(DEFAULT_USER_CONFIG)
 
@@ -238,8 +239,23 @@ def save_user_config(config: dict[str, Any]) -> None:
             to_save[k] = _encode_secret(v)
         else:
             to_save[k] = v
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(to_save, f, indent=2, ensure_ascii=False)
+
+    # Write beside the destination and replace atomically. A crash or power
+    # loss must not leave config.json half-written or empty.
+    temp_path = CONFIG_PATH + ".tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(to_save, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CONFIG_PATH)
+    finally:
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
     _restrict_file_permissions(CONFIG_PATH)
 
 

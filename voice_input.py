@@ -37,6 +37,7 @@ class VoiceInputController(QObject):
         super().__init__()
         self.sample_rate = sample_rate
         self._recording = False
+        self._processing = False
         self._stream = None
         self._chunks: list[np.ndarray] = []
         self._lock = threading.Lock()
@@ -47,9 +48,9 @@ class VoiceInputController(QObject):
     def _check_dependencies(self) -> bool:
         try:
             import sounddevice  # noqa: F401
-            import sensevoice_asr  # noqa: F401
-            return True
-        except ImportError:
+            import sensevoice_asr
+            return sensevoice_asr.is_model_available()
+        except (ImportError, OSError, ValueError):
             return False
 
     def is_available(self) -> bool:
@@ -67,7 +68,7 @@ class VoiceInputController(QObject):
         if not self._available:
             self._emit_state('error')
             return False
-        if self._recording:
+        if self._recording or self._processing:
             return False
         try:
             import sounddevice as sd
@@ -99,6 +100,7 @@ class VoiceInputController(QObject):
         except (OSError, AttributeError) as exc:
             logger.debug("Failed to stop/close audio stream: %s", exc)
         self._recording = False
+        self._processing = True
         self._emit_state('processing')
 
         # 异步识别（CPU 推理不阻塞主线程）
@@ -138,6 +140,7 @@ class VoiceInputController(QObject):
             logger.debug("ASR: audio size=%d, duration=%.2fs", audio.size, dur)
             if audio.size < self.sample_rate // 4:  # < 0.25s 视为无效
                 logger.debug("ASR: audio too short, skipping")
+                self._processing = False
                 self._emit_state('ready')
                 return
             logger.debug("ASR: calling transcribe...")
@@ -149,8 +152,10 @@ class VoiceInputController(QObject):
                 logger.debug("_on_recognized returned")
         except Exception as e:
             logger.error("ASR error: %s", e, exc_info=True)
+            self._processing = False
             self._emit_state('error')
             return
+        self._processing = False
         self._emit_state('ready')
 
     def cancel(self) -> None:

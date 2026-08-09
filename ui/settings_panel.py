@@ -528,8 +528,12 @@ class SettingsPanel(QDialog):
             row["enabled_cb"].setChecked(
                 self._config.get(f"sound_{event}_enabled", True)
             )
+            custom_path = self._config.get(f"sound_{event}_custom_path", "") or ""
+            # Keep the current value in _sound_paths so an unmodified event
+            # is preserved when the user saves without touching it.
+            self._sound_paths[event] = custom_path
             row["path_label"].setText(
-                self._short_path(self._config.get(f"sound_{event}_custom_path", ""))
+                self._short_path(custom_path)
             )
         self._on_sound_master_toggled(self._sound_cb.isChecked())
 

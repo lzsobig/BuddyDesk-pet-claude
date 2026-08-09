@@ -10,20 +10,36 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys
 
-# Create comprehensive PySide6 mocks so the module can be imported
-_mock_modules = {}
-for mod_name in [
+# Import after PySide6 is mocked
+from ui.chat_widgets import _TAG_RE
+from ui.markdown_renderer import MarkdownRenderer
+
+# test_chat_widgets historically replaced PySide6 with MagicMock at module
+# import time, which permanently poisoned sys.modules for every other test
+# module collected afterwards. Keep the mock, but scope it to this module's
+# test run and restore the real modules afterwards.
+_MOCKED_MODULES = [
     "PySide6",
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
-]:
-    _mock_modules[mod_name] = MagicMock()
-    sys.modules[mod_name] = _mock_modules[mod_name]
+]
 
-# Import after PySide6 is mocked
-from ui.chat_widgets import _TAG_RE
-from ui.markdown_renderer import MarkdownRenderer
+
+def setUpModule():
+    global _ORIG
+    _ORIG = {}
+    for mod_name in _MOCKED_MODULES:
+        _ORIG[mod_name] = sys.modules.get(mod_name)
+        sys.modules[mod_name] = MagicMock()
+
+
+def tearDownModule():
+    for mod_name in _MOCKED_MODULES:
+        if _ORIG.get(mod_name) is not None:
+            sys.modules[mod_name] = _ORIG[mod_name]
+        else:
+            sys.modules.pop(mod_name, None)
 
 
 class TestTagRegex(unittest.TestCase):

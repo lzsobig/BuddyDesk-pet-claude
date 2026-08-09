@@ -11,13 +11,13 @@ import os
 import subprocess
 import sys
 
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRectF, QRect
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRectF, QRect, QPoint
 from PySide6.QtGui import QFont, QPainter, QColor, QBrush, QImage, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QRadioButton, QButtonGroup, QComboBox,
-    QFrame, QScrollArea, QWidget, QGraphicsDropShadowEffect,
+    QFrame, QScrollArea, QWidget, QGraphicsDropShadowEffect, QApplication,
 )
 
 import config
@@ -711,12 +711,34 @@ class LauncherDialog(QDialog):
             self.move(e.globalPosition().toPoint() - self._drag_pos)
 
     def _apply_rounded_mask(self):
+        # On Windows, applying a mask to a translucent frameless QDialog can
+        # recreate the native surface and reset its position to Qt's sentinel
+        # off-screen coordinates (typically -21333,-21333).  Preserve the
+        # launcher's intended position and restore it after the native update.
+        target_pos = self.pos()
+        if target_pos.x() < -10000 or target_pos.y() < -10000:
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen:
+                geo = screen.availableGeometry()
+                target_pos = QPoint(
+                    geo.x() + (geo.width() - self.width()) // 2,
+                    geo.y() + (geo.height() - self.height()) // 2,
+                )
         w, h = self.width(), self.height()
         from PySide6.QtGui import QPainterPath, QRegion, QTransform
         from PySide6.QtCore import QRectF
         path = QPainterPath()
         path.addRoundedRect(QRectF(0.0, 0.0, float(w), float(h)), RADIUS_LG, RADIUS_LG)
         self.setMask(QRegion(path.toFillPolygon(QTransform()).toPolygon()))
+
+        def _restore_position():
+            if not self.isVisible() or self.pos() != target_pos:
+                self.move(target_pos)
+
+        # A second tick covers the native window recreation that happens
+        # after setMask() returns on some Qt 6 / Windows combinations.
+        QTimer.singleShot(0, _restore_position)
+        QTimer.singleShot(80, _restore_position)
 
     def paintEvent(self, _e):
         # Paint a rounded warm-white background with a 1px border. The 4

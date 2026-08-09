@@ -5,23 +5,44 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: '3.11.9'
+          cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller
+        run: python -m pip install -r requirements.txt pyinstaller==6.16.0
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
 
       - name: Build with PyInstaller
-        run: pyinstaller build.spec
+        run: python -m PyInstaller --clean --noconfirm build.spec
+
+      - name: Verify frozen resources
+        shell: pwsh
+        run: |
+          $required = @(
+            "dist/BuddyDesk/BuddyDesk.exe",
+            "dist/BuddyDesk/_internal/assets/buddydesk.ico",
+            "dist/BuddyDesk/_internal/assets/cat_frames_v2/frame_00.png",
+            "dist/BuddyDesk/_internal/PySide6/plugins/platforms/qwindows.dll"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) { throw "Missing build output: $path" }
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -32,7 +53,7 @@ jobs:
   release:
     needs: build-windows
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:

@@ -34,7 +34,8 @@ templates/
 # Build output
 build/
 dist/
-*.spec
+# Keep the versioned PyInstaller entrypoint; ignore ad-hoc generated specs.
+*.generated.spec
 
 # Launcher screenshots (keep sprite assets)
 launcher-screenshot.png

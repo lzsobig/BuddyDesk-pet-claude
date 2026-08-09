@@ -67,8 +67,15 @@ class AIBridge(QObject):
             pass
 
     def update_config(self, user_config: dict):
-        self.user_config = user_config
-        self.backend = create_backend(user_config)
+        """Replace the backend without allowing an old request to leak through."""
+        new_backend = create_backend(user_config)
+        with self._send_lock:
+            self._request_counter += 1
+            old_backend = self.backend
+            self.backend = new_backend
+            old_backend.cancel()
+            self.user_config = user_config
+            self._estimate_tokens = self._make_estimator()
 
     def send(self, messages: list):
         """Send messages to AI backend (non-blocking, cancels previous request).
@@ -77,16 +84,18 @@ class AIBridge(QObject):
         request are silently discarded instead of overwriting fresh results.
         """
         import time
-        # Cancel any in-flight backend request
+        # Cancel any in-flight backend request and capture the backend used by
+        # this request. Settings changes must not swap it underneath the worker.
         with self._send_lock:
             self._request_counter += 1
             my_id = self._request_counter
-            self.backend.cancel()
+            backend = self.backend
+            backend.cancel()
 
         self._thinking_start = time.monotonic()
         self.state_changed.emit("thinking", "")
         self.event_engine.record(EventEngine.CHAT_START, {
-            "backend": self.backend.get_name(),
+            "backend": backend.get_name(),
             "message_count": len(messages),
         })
         # P3-3: 发送时即更新 token 用量
@@ -118,9 +127,12 @@ class AIBridge(QObject):
 
         def worker():
             try:
-                full = self.backend.send_message(messages, on_chunk=on_chunk)
-                if full and my_id == self._request_counter:
-                    on_done(full)
+                full = backend.send_message(messages, on_chunk=on_chunk)
+                if my_id == self._request_counter:
+                    # Backends may return an empty string after cancellation or
+                    # an empty provider response. Always close the UI stream;
+                    # otherwise ChatWindow remains disabled forever.
+                    on_done(full or "")
             except Exception as e:
                 if my_id == self._request_counter:
                     on_error(str(e))
@@ -129,8 +141,11 @@ class AIBridge(QObject):
         thread.start()
 
     def cancel(self):
-        """Cancel current stream."""
-        self.backend.cancel()
+        """Invalidate the current stream before asking its backend to stop."""
+        with self._send_lock:
+            self._request_counter += 1
+            backend = self.backend
+        backend.cancel()
 
     def _on_event(self, event_type: str, data: dict):
         state_map = {

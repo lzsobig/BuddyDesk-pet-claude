@@ -92,19 +92,26 @@ class TestParseAndExecute(unittest.TestCase):
         results = self.engine.parse_and_execute("今天天气不错")
         self.assertEqual(results, [])
 
-    def test_safe_shell_executes(self):
+    def test_shell_always_requires_confirmation(self):
+        """All model-generated SHELL tags require explicit approval."""
         results = self.engine.parse_and_execute("看看 [SHELL:echo hello] 啊")
         self.assertEqual(len(results), 1)
-        self.assertTrue(results[0].success)
-        self.assertIn("hello", results[0].output)
+        self.assertFalse(results[0].success)
+        self.assertTrue(results[0].requires_confirmation)
+        self.assertIn("确认", results[0].error)
 
-    def test_safe_shell_no_confirmation_needed(self):
-        """Safe SHELL tags execute directly without confirmation."""
+    def test_confirmed_safe_shell_executes(self):
         results = self.engine.parse_and_execute(
             "看看 [SHELL:echo hello] 啊", auto_confirm=True)
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0].success)
         self.assertIn("hello", results[0].output)
+
+    def test_claude_tag_requires_confirmation(self):
+        results = self.engine.parse_and_execute("[CLAUDE:inspect the project]")
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].success)
+        self.assertTrue(results[0].requires_confirmation)
 
     def test_dangerous_shell_requires_confirmation(self):
         """Dangerous SHELL tags require user confirmation."""

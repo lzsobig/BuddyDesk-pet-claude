@@ -7,8 +7,32 @@ import sys
 import os
 import io
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
+
+# ── Qt bootstrap (must run before any PySide6 import) ──────────────────────
+# Pin the Qt platform plugin path to the PySide6 install so that stray Qt
+# DLLs on PATH (e.g. from WeChat/QQ installers) can never shadow the correct
+# plugin, which otherwise surfaces as:
+#   "This application failed to start because no Qt platform plugin
+#    could be initialized ... Available platform plugins are: windows."
+def _bootstrap_qt():
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("PySide6")
+        if spec is not None and spec.submodule_search_locations:
+            base = list(spec.submodule_search_locations)[0]
+            plugins = os.path.join(base, "plugins")
+            if os.path.isdir(plugins):
+                os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugins
+        # Never inherit a stale QPA platform from the environment.
+        os.environ.pop("QT_QPA_PLATFORM", None)
+    except Exception:
+        pass
+
+
+_bootstrap_qt()
 
 # Let Qt handle DPI awareness natively — avoids the
 # "SetProcessDpiAwarenessContext() failed: 拒绝访问" warning that occurs
@@ -38,7 +62,6 @@ from ui.tray import SystemTray
 from ui.confirm_dialog import ConfirmDialog
 from ui.settings_panel import SettingsPanel
 from ui.pin_card import PinManager
-from ui.voice_capsule import VoiceCapsule
 import audio
 import config as cfg
 
@@ -48,6 +71,11 @@ class _VoiceBridge(QObject):
     Background ASR thread emits signal → main thread slot receives it."""
     recognized = Signal(str)
     state_changed = Signal(str)
+
+
+class _CommandBridge(QObject):
+    """Marshal confirmed command results from worker threads to the UI."""
+    finished = Signal(str, bool, str)
 
 
 class BuddyDeskApp:
@@ -75,10 +103,11 @@ class BuddyDeskApp:
         self.tray = None
         self.pin_manager = None  # P2-3
         self.voice_input = None  # P3-6
-        self.voice_capsule = None  # P3-6.1（闪电说悬浮胶囊）
         self._keyboard_registered = False
         self._user_config: dict = {}
         self._clipboard_last: str = ""
+        self._command_bridge = _CommandBridge()
+        self._command_bridge.finished.connect(self._on_command_finished)
 
     def run(self):
         """Run the application."""
@@ -96,7 +125,10 @@ class BuddyDeskApp:
 
         # Step 2: Create bridge (AI + EventEngine)
         self.bridge = AIBridge(self._user_config)
-        self.command_engine = CommandEngine(self.bridge.event_engine)
+        self.command_engine = CommandEngine(
+            self.bridge.event_engine,
+            user_config=self._user_config,
+        )
 
         # Step 3: Initialize UI components
         if self._user_config.get("chat_enabled", True):
@@ -149,12 +181,17 @@ class BuddyDeskApp:
                 on_recognized=self._emit_voice_recognized,
                 on_state=self._emit_voice_state,
             )
-            self.voice_capsule = VoiceCapsule()
-            self.voice_input.level_emitted.connect(
-                self.voice_capsule.push_level
-            )
+            if self.island:
+                self.voice_input.level_emitted.connect(self.island.set_voice_level)
             if not self.voice_input.is_available():
-                print("[voice] 语音功能不可用：缺少 sounddevice 或 sensevoice_asr 依赖")
+                detail = "依赖未安装"
+                try:
+                    import sensevoice_asr
+                    if not sensevoice_asr.is_model_available():
+                        detail = "SenseVoice 模型未找到"
+                except ImportError:
+                    pass
+                print(f"[voice] 语音功能不可用：{detail}")
         except Exception as e:
             print(f"[voice] init failed: {e}")
 
@@ -183,8 +220,6 @@ class BuddyDeskApp:
             self.chat.show()
             if self.tray:
                 self.tray.set_chat_visible(True)
-
-        audio.play("voice_start", config_dict=self._user_config)
 
         print(f"\n{'='*55}")
         print(f"  BuddyDesk v{cfg.APP_VERSION}")
@@ -219,20 +254,44 @@ class BuddyDeskApp:
             self._start_clipboard_monitor()
 
         # Rebuild command engine with new config
-        self.command_engine = CommandEngine(self.bridge.event_engine)
+        self.command_engine = CommandEngine(
+            self.bridge.event_engine,
+            user_config=self._user_config,
+        )
 
     # ── Command confirmation ────────────────────────────────────────
     def _on_confirm_command(self, command: str):
-        """Show confirm dialog for dangerous commands."""
+        """Show confirm dialog, then execute the approved operation off the UI thread."""
         audio.play("file_dropped", config_dict=self._user_config)
 
         dlg = ConfirmDialog(command, parent=self.chat)
         if dlg.exec() == ConfirmDialog.DialogCode.Accepted:
-            self.command_engine.confirm_pending()
+            worker = threading.Thread(
+                target=self._execute_confirmed_command,
+                args=(command,),
+                daemon=True,
+            )
+            worker.start()
         else:
             self.command_engine.cancel_pending()
             if self.chat:
                 self.chat.append_command_result(command, False, "用户取消执行")
+
+    def _execute_confirmed_command(self, fallback_command: str):
+        """Consume one pending command and publish its result to the UI thread."""
+        try:
+            result = self.command_engine.confirm_pending()
+            command = result.command or fallback_command
+            output = result.output if result.success else result.error
+            self._command_bridge.finished.emit(command, result.success, output)
+        except Exception as exc:
+            self._command_bridge.finished.emit(
+                fallback_command, False, f"执行失败: {exc}"
+            )
+
+    def _on_command_finished(self, command: str, success: bool, output: str):
+        if self.chat:
+            self.chat.append_command_result(command, success, output)
 
     # ── State changes ───────────────────────────────────────────────
     def _toggle_chat(self):
@@ -309,6 +368,9 @@ class BuddyDeskApp:
 
         results = self.command_engine.parse_and_execute(full_text)
         for result in results:
+            if result.requires_confirmation:
+                self._on_confirm_command(result.command)
+                continue
             if self.chat:
                 self.chat.append_command_result(
                     result.command,
@@ -409,7 +471,16 @@ class BuddyDeskApp:
             logger.debug("voice_input is None")
             return
         if not self.voice_input.is_available():
-            self._voice_msg("⚠️ 语音功能不可用，请安装 sounddevice 等依赖")
+            detail = "请安装语音依赖"
+            try:
+                import sensevoice_asr
+                if not sensevoice_asr.is_model_available():
+                    detail = "请安装 SenseVoice 模型"
+            except ImportError:
+                pass
+            self._voice_msg(f"⚠️ 语音输入不可用，{detail}")
+            if self.island:
+                self.island.set_state("error", detail)
             return
         if self.voice_input._recording:
             # 已在录音 → 视为 toggle off（用户单击而非长按）
@@ -417,14 +488,19 @@ class BuddyDeskApp:
             self._do_voice_stop()
             return
         if self.voice_input.begin_recording():
+            if self.chat and hasattr(self.chat, "_voice_btn"):
+                self.chat._voice_btn.set_recording(True)
+                self.chat._voice_btn.setToolTip("停止录音")
             logger.debug("recording started")
             audio.play("voice_start", config_dict=self._user_config)
-            if self.voice_capsule:
-                self.voice_capsule.show_recording()
+            if self.island:
+                self.island.set_voice_recording()
             # 安全超时：最长录音 30 秒自动停止
             QTimer.singleShot(30000, self._voice_auto_stop)
         else:
             logger.debug("begin_recording failed")
+            if self.island:
+                self.island.set_state("error", "检查麦克风设备")
             self._voice_msg("⚠️ 无法启动录音，请检查麦克风设备")
 
     def _on_voice_release(self):
@@ -440,8 +516,8 @@ class BuddyDeskApp:
         if not self.voice_input:
             return
         self.voice_input.end_recording()
-        if self.voice_capsule:
-            self.voice_capsule.show_processing()
+        if self.island:
+            self.island.set_voice_processing()
         logger.debug("recording stopped → processing")
 
     def _voice_auto_stop(self):
@@ -464,9 +540,9 @@ class BuddyDeskApp:
     def _on_voice_recognized_main(self, text: str):
         """识别完成：填入 chat input + 隐藏胶囊 + 灵动岛回执。在主线程执行。"""
         logger.debug("_on_voice_recognized_main text='%s'", text)
-        if self.voice_capsule:
-            QTimer.singleShot(180, self.voice_capsule.hide_capsule)
         if not text.strip():
+            if self.island:
+                self.island.clear_voice_state()
             self._voice_msg("⚠️ 语音识别为空，请重试")
             return
         if self.chat and hasattr(self.chat, "_input"):
@@ -487,8 +563,11 @@ class BuddyDeskApp:
         """录音/处理/就绪 状态通知。在主线程执行。"""
         logger.debug("state_main: %s", state)
         if state in ("error", "ready"):
-            if self.voice_capsule and self.voice_capsule.isVisible():
-                self.voice_capsule.hide_capsule()
+            if self.chat and hasattr(self.chat, "_voice_btn"):
+                self.chat._voice_btn.set_recording(False)
+                self.chat._voice_btn.setToolTip("语音输入（Ctrl+Shift+V）")
+            if self.island:
+                self.island.clear_voice_state()
             if state == "error" and self.island:
                 self.island.set_state("error", "语音出错")
                 QTimer.singleShot(4000, lambda: self.island.set_state("idle", "") if self.island else None)
@@ -509,11 +588,8 @@ class BuddyDeskApp:
         if hasattr(self, "_clipboard_timer") and self._clipboard_timer:
             self._clipboard_timer.stop()
 
-        if self.voice_capsule:
-            try:
-                self.voice_capsule.hide()
-            except (RuntimeError, AttributeError) as exc:
-                logger.debug("Failed to hide voice capsule: %s", exc)
+        if self.island:
+            self.island.clear_voice_state()
 
         if self.tray:
             try:

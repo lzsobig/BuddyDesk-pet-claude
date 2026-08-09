@@ -123,8 +123,11 @@ class _ConversationCard(QFrame):
         layout.addLayout(row3)
 
     def _on_restore(self, idx: int):
-        if hasattr(self.parent(), 'restore_requested'):
-            self.parent().restore_requested.emit(idx)
+        # Signals are injected by HistoryPanel._rebuild_list; never rely on
+        # the widget parent (which is the list container, not the panel).
+        sig = getattr(self, "restore_requested", None)
+        if sig is not None:
+            sig.emit(idx)
 
     def _extract_preview(self, msgs: list[dict]) -> str:
         """Get a one-line preview from the last message."""
@@ -195,13 +198,15 @@ class _ConversationCard(QFrame):
             text=self._conv.get("title", ""),
         )
         if ok and new_title.strip():
-            # Signal will be handled by parent panel
-            if hasattr(self.parent(), 'rename_requested'):
-                self.parent().rename_requested.emit(self._idx, new_title.strip())
+            # Signal injected by HistoryPanel._rebuild_list
+            sig = getattr(self, "rename_requested", None)
+            if sig is not None:
+                sig.emit(self._idx, new_title.strip())
 
     def _on_delete(self):
-        if hasattr(self.parent(), 'delete_requested'):
-            self.parent().delete_requested.emit(self._idx)
+        sig = getattr(self, "delete_requested", None)
+        if sig is not None:
+            sig.emit(self._idx)
 
 
 class HistoryPanel(QFrame):
@@ -385,6 +390,9 @@ class HistoryPanel(QFrame):
 
             card = _ConversationCard(idx, conv)
             card.clicked.connect(self._on_card_clicked)
+            # Inject panel-level signals onto the card. Cards must not walk
+            # up the parent chain (their direct parent is the list container).
+            card.restore_requested = self.restore_requested
             card.rename_requested = self.rename_requested
             card.delete_requested = self.delete_requested
             self._list_layout.insertWidget(self._list_layout.count() - 1, card)

@@ -20,9 +20,40 @@ from abc import ABC, abstractmethod
 
 # Suppress CMD window flash on Windows for all subprocess calls
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if sys.platform == "win32" else 0
 from typing import Callable, Optional
 
 import config
+
+
+def _terminate_process_tree(process) -> None:
+    """Stop a CLI process and descendants without waiting indefinitely."""
+    if process is None:
+        return
+    pid = getattr(process, "pid", None)
+    try:
+        if sys.platform == "win32" and pid:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                creationflags=_NO_WINDOW,
+            )
+        elif sys.platform != "win32" and pid:
+            try:
+                import os
+                import signal
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                process.terminate()
+        else:
+            process.terminate()
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            process.kill()
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -179,6 +210,7 @@ class ClaudeCodeBackend(AIBackend):
         self.model = model  # P0-2: no hardcoded model; None lets CLI use its default
         self._cancel_event = threading.Event()
         self._process = None
+        self._process_lock = threading.Lock()
 
     def send_message(self, messages: list, on_chunk=None) -> str:
         self._cancel_event.clear()
@@ -204,7 +236,7 @@ class ClaudeCodeBackend(AIBackend):
             cli_args.extend(["--model", self.model])
         _use_shell = _needs_shell_for_cli(self.cli_path)
         try:
-            self._process = subprocess.Popen(
+            process = subprocess.Popen(
                 cli_args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -214,17 +246,37 @@ class ClaudeCodeBackend(AIBackend):
                 errors="replace",
                 cwd=self.working_dir,
                 shell=_use_shell,
-                creationflags=_NO_WINDOW,
+                creationflags=_NO_WINDOW | _PROCESS_GROUP,
+                start_new_session=sys.platform != "win32",
             )
+            with self._process_lock:
+                self._process = process
+            if self._cancel_event.is_set():
+                _terminate_process_tree(process)
 
-            self._process.stdin.write(prompt)
-            self._process.stdin.close()
+            process.stdin.write(prompt)
+            process.stdin.close()
+
+            stderr_lines: list[str] = []
+
+            def consume_stderr():
+                if not process.stderr:
+                    return
+                for stderr_line in process.stderr:
+                    if len(stderr_lines) < 40:
+                        stderr_lines.append(stderr_line)
+
+            # Always drain stderr while stdout is parsed. Claude can emit
+            # progress/debug output even when stdout is valid JSON; reading it
+            # only after stdout closes can deadlock a full OS pipe.
+            stderr_thread = threading.Thread(target=consume_stderr, daemon=True)
+            stderr_thread.start()
 
             full_response = ""
             saw_json_chunk = False
-            for line in self._process.stdout:
+            for line in process.stdout:
                 if self._cancel_event.is_set():
-                    self._process.terminate()
+                    _terminate_process_tree(process)
                     break
                 line = line.strip()
                 if not line:
@@ -246,28 +298,34 @@ class ClaudeCodeBackend(AIBackend):
                             if on_chunk:
                                 on_chunk(content)
                 except json.JSONDecodeError:
-                    # Stream produced non-JSON — fall back to non-streaming
-                    stderr = self._process.stderr.read() if self._process.stderr else ""
-                    stream_error = f"stream produced non-JSON output (stderr: {stderr[:200]})"
+                    # Let the process finish and use the bounded stderr buffer
+                    # below; never block on stderr while the child is running.
+                    stream_error = "stream produced non-JSON output"
                     break
 
             try:
-                self._process.wait(timeout=120)
+                process.wait(timeout=120)
             except subprocess.TimeoutExpired:
-                self._process.terminate()
+                _terminate_process_tree(process)
                 stream_error = "stream timed out (120s)"
-                self._process = None
+                with self._process_lock:
+                    if self._process is process:
+                        self._process = None
+
+            stderr_thread.join(timeout=2)
 
             if self._cancel_event.is_set():
                 return full_response.strip() if full_response else ""
 
-            if self._process is not None and self._process.returncode != 0 and not full_response:
-                stderr = self._process.stderr.read() if self._process.stderr else ""
+            if process is not None and process.returncode != 0 and not full_response:
+                stderr = "".join(stderr_lines)
                 stream_error = f"Claude CLI error: {stderr[:500]}"
 
             # If we got nothing back and the stream failed, fall through
             if full_response or (saw_json_chunk and stream_error is None):
-                self._process = None
+                with self._process_lock:
+                    if self._process is process:
+                        self._process = None
                 return full_response.strip() if full_response else ""
         except FileNotFoundError:
             raise RuntimeError(
@@ -314,11 +372,11 @@ class ClaudeCodeBackend(AIBackend):
 
     def cancel(self):
         self._cancel_event.set()
-        if self._process:
-            try:
-                self._process.terminate()
-            except Exception:
-                pass
+        with self._process_lock:
+            process = self._process
+            self._process = None
+        if process:
+            _terminate_process_tree(process)
 
     def is_available(self) -> bool:
         try:

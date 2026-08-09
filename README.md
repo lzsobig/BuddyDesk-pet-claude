@@ -81,7 +81,7 @@ AI: 让 Claude Code 来帮你！ [CLAUDE:创建贪吃蛇游戏]
    snake_game.py 已创建
 ```
 
-引擎自动解析回复中的标签并执行：`[APP:xxx]` 启动应用、`[SHELL:xxx]` 执行命令、`[CLAUDE:xxx]` 调用 Claude Code。
+引擎自动解析回复中的标签并执行：`[APP:xxx]` 启动应用、`[SHELL:xxx]` 执行命令、`[CLAUDE:xxx]` 调用 Claude Code。由 AI 回复生成的 Shell、CMD 和 Claude 操作默认需要在聊天中明确回复“确认执行”后才会运行；未确认的操作不会执行。
 
 <h3>💬 Multi-Conversation 多对话</h3>
 
@@ -120,9 +120,22 @@ DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 AP
 
 <br>
 
-双击 `启动 BuddyDesk.bat` — 自动检测 Python、安装依赖、启动应用。
+源码目录中双击 `启动 BuddyDesk.bat`：脚本会定位 Python 3.10+、安装 `requirements.txt`，并在依赖安装成功后启动应用。首次启动建议使用 BAT，这样安装失败时能看到具体错误。
 
-静默版（无命令行窗口）：双击 `启动 BuddyDesk.vbs`
+静默版（无命令行窗口）：先成功运行一次 `启动 BuddyDesk.bat`，再双击 `启动 BuddyDesk.vbs`。VBS 会检查核心依赖，缺少依赖时会提示先运行 BAT，不会静默退出。
+
+</details>
+
+<details>
+<summary><b>Frozen Windows Build</b></summary>
+
+仓库中的 `build.spec` 用 PyInstaller 生成 onedir 包：
+
+```bash
+python -m PyInstaller --clean --noconfirm build.spec
+```
+
+构建完成后运行 `dist/BuddyDesk/BuddyDesk.exe`。请保持 `dist/BuddyDesk/_internal` 与 exe 一起分发，不要只复制 exe 文件。打包版不需要安装 Python 或项目依赖；首次启动仍需要在启动配置中选择 AI 后端并填写对应配置。
 
 </details>
 
@@ -132,7 +145,7 @@ DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 AP
 ```bash
 git clone https://github.com/lzsobig/BuddyDesk-pet-claude.git
 cd BuddyDesk-pet-claude
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python main.py
 ```
 
@@ -141,7 +154,7 @@ python main.py
 <details>
 <summary><b>AI Backend</b></summary>
 
-**Claude Code** — Install [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), select "Claude Code" on launch. Done.
+**Claude Code** — Install [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), select "Claude Code" on launch. The CLI path can be overridden in settings when it is not on PATH.
 
 **OpenAI API** — Paste API key, choose a platform:
 
@@ -153,6 +166,20 @@ python main.py
 | SiliconFlow | `https://api.siliconflow.cn/v1` |
 | Moonshot | `https://api.moonshot.cn/v1` |
 | Ollama | `http://localhost:11434/v1` |
+
+</details>
+
+<details>
+<summary><b>Voice Input (optional)</b></summary>
+
+语音输入依赖 `sounddevice`、`onnxruntime` 和本地 SenseVoice-Small ONNX 模型。模型文件不随源码或 PyInstaller 包发布，默认目录为：
+
+```text
+%APPDATA%\Shandianshuo\models\sensevoice-small\model.onnx
+%APPDATA%\Shandianshuo\models\sensevoice-small\tokens.json
+```
+
+缺少模型时，文字聊天和应用启动不受影响；只有语音输入不可用。模型就绪后按住 `Ctrl+Shift+V` 录音，松开后识别结果会回填聊天输入框。
 
 </details>
 

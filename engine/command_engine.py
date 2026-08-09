@@ -21,63 +21,54 @@ from typing import Optional
 
 import config
 
-# Suppress CMD window flash on Windows
+# Suppress CMD window flash on Windows for all subprocess calls
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+# Windows registry — imported once at module load so helper methods don't
+# each need a local import. winreg only exists on win32.
+if sys.platform == "win32":
+    import winreg as _winreg  # type: ignore
+else:
+    _winreg = None  # type: ignore
 
 
 def _read_lnk_target(lnk_path: str) -> str:
-    """Resolve a Windows .lnk shortcut to its target executable.
+    """Resolve a shortcut target through Windows Shell when pywin32 exists.
 
-    Tries the COM IShellLink first (most reliable); falls back to parsing
-    the binary .lnk format directly when COM is unavailable (e.g. headless
-    environments). Returns empty string on any failure.
+    Windows shortcuts have several valid binary layouts. When COM is not
+    available callers launch the .lnk itself with Windows Shell instead of
+    relying on a partial binary parser.
     """
-    # Try COM first
     try:
         import win32com.client  # type: ignore
         shell = win32com.client.Dispatch("WScript.Shell")
-        shortcut = shell.CreateShortCut(lnk_path)
-        target = shortcut.Targetpath
-        if target and os.path.exists(target):
-            return target
-    except Exception:
-        pass
-
-    # Fall back to raw .lnk parsing (no dependencies)
-    try:
-        with open(lnk_path, "rb") as f:
-            data = f.read()
-        # Locate the LinkInfo block (0x4C 0x00 0x00 0x00 marker)
-        marker = b"\x4c\x00\x00\x00"
-        idx = data.find(marker)
-        if idx < 0:
-            return ""
-        # Skip the first 28 bytes of the LinkInfo header
-        base = idx + 28
-        # LocalBasePath offset is at base+4 (uint32 LE)
-        if base + 8 > len(data):
-            return ""
-        local_off = int.from_bytes(data[base + 4:base + 8], "little")
-        if local_off == 0 or base + local_off + 4 > len(data):
-            return ""
-        # Read null-terminated UTF-16LE string at local_off
-        end = data.find(b"\x00\x00", base + local_off)
-        if end < 0:
-            return ""
-        raw = data[base + local_off:end]
-        return raw.decode("utf-16le", errors="ignore")
+        return shell.CreateShortCut(lnk_path).Targetpath or ""
     except Exception:
         return ""
+
+
+_SENSITIVE_COMMAND_RE = re.compile(
+    r"(?i)(?:\b(?:api[_-]?key|token|password|passwd|secret)\b\s*[=:]\s*|\bauthorization\b\s*[:=]\s*(?:Bearer\s+)?|\bBearer\s+)([^\s\"']+)"
+)
+
+
+def _redact_command(value: str) -> str:
+    """Mask common credentials before command text reaches persistent logs."""
+    if not value:
+        return value
+    return _SENSITIVE_COMMAND_RE.sub("[REDACTED]", value)
 
 
 class CommandResult:
     """命令执行结果"""
 
-    def __init__(self, success: bool, output: str = "", command: str = "", error: str = ""):
+    def __init__(self, success: bool, output: str = "", command: str = "", error: str = "",
+                 requires_confirmation: bool = False):
         self.success = success
         self.output = output
         self.command = command
         self.error = error
+        self.requires_confirmation = requires_confirmation
         self.timestamp = datetime.now().isoformat()
 
     def to_dict(self):
@@ -261,29 +252,171 @@ class AppRegistry:
 
     @classmethod
     def _find_via_registry(cls, name: str) -> Optional[str]:
-        """Look up *name* in WINDOWS_APPS and search Program Files / LocalAppData."""
+        """Look up *name* in WINDOWS_APPS and search Program Files / LocalAppData.
+
+        Validates symlink targets so a broken junction (e.g. WeChat migrated
+        away by 电脑管家) is skipped instead of returning a dead path.
+        """
         if name not in cls.WINDOWS_APPS or cls.WINDOWS_APPS[name] is None:
             return None
         subpath, exe = cls.WINDOWS_APPS[name]
-        for program_files in [
+        search_roots = [
             os.environ.get("ProgramFiles", "C:\\Program Files"),
             os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
             os.environ.get("LOCALAPPDATA", ""),
-        ]:
-            if not program_files:
+            # Common user-scoped install roots that 电脑管家 / Tencent use
+            os.environ.get("USERPROFILE", ""),
+        ]
+        for root in search_roots:
+            if not root:
                 continue
             if "*" in subpath:
                 import glob
-                matches = glob.glob(os.path.join(program_files, subpath))
-                for match in matches:
+                for match in glob.glob(os.path.join(root, subpath)):
                     full_path = os.path.join(match, exe)
-                    if os.path.exists(full_path):
+                    if cls._path_launchable(full_path):
                         return f'"{full_path}"'
             else:
-                full_path = os.path.join(program_files, subpath, exe)
-                if os.path.exists(full_path):
+                full_path = os.path.join(root, subpath, exe)
+                if cls._path_launchable(full_path):
                     return f'"{full_path}"'
         return None
+
+    @staticmethod
+    def _path_launchable(path: str) -> bool:
+        """Return whether *path* is a real launchable file.
+
+        Directories are deliberately rejected: an App Paths or Uninstall entry
+        pointing at a directory must not be reported as a successfully opened
+        application.
+        """
+        try:
+            return os.path.isfile(path)
+        except (OSError, ValueError):
+            return False
+
+    @classmethod
+    def _find_via_uninstall_registry(cls, name: str) -> Optional[str]:
+        """Query HKLM/HKCU Uninstall keys for InstallLocation + DisplayIcon.
+
+        Covers apps that don't live under Program Files (e.g. D-drive
+        installs, 电脑管家-migrated WeChat, portable apps). Only Windows.
+        """
+        if _winreg is None:
+            return None
+        search_keys = cls._find_via_aliases(name)
+        for hive, subkey, flags in (
+            (_winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+             _winreg.KEY_READ | _winreg.KEY_WOW64_64KEY),
+            (_winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+             _winreg.KEY_READ | _winreg.KEY_WOW64_32KEY),
+            (_winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+             _winreg.KEY_READ),
+        ):
+            try:
+                with _winreg.OpenKey(hive, subkey, 0, flags) as parent:
+                    for i in range(0, _winreg.QueryInfoKey(parent)[0]):
+                        try:
+                            child_name = _winreg.EnumKey(parent, i)
+                        except OSError:
+                            break
+                        try:
+                            with _winreg.OpenKey(parent, child_name) as child:
+                                display = cls._reg_get(child, "DisplayName", "")
+                                if not display or not cls._display_name_matches(display, search_keys):
+                                    continue
+                                install_loc = cls._reg_get(child, "InstallLocation", "")
+                                display_icon = cls._reg_get(child, "DisplayIcon", "")
+                                exe = cls._extract_exe_path(display_icon)
+                                if exe and cls._path_launchable(exe):
+                                    return f'"{exe}"'
+                                for candidate in cls._candidate_executables(install_loc, name):
+                                    if cls._path_launchable(candidate):
+                                        return f'"{candidate}"'
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        return None
+
+    @staticmethod
+    def _display_name_matches(display: str, search_keys: list[str]) -> bool:
+        """Match a registry DisplayName against aliases without broad substrings."""
+        normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", display.lower()).strip()
+        words = set(normalized.split())
+        compact = normalized.replace(" ", "")
+        for key in search_keys:
+            normalized_key = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", key.lower())
+            if normalized_key and (normalized_key in words or normalized_key == compact):
+                return True
+        return False
+
+    @classmethod
+    def _candidate_executables(cls, install_location: str, name: str) -> list[str]:
+        """Return only explicit executable candidates under InstallLocation."""
+        if not install_location or not os.path.isdir(install_location):
+            return []
+        candidates = []
+        for exe_name in cls._app_exe_candidates(name):
+            candidates.append(os.path.join(install_location, exe_name))
+        return candidates
+
+    @staticmethod
+    def _reg_get(key, name: str, default: str = "") -> str:
+        try:
+            value, _ = _winreg.QueryValueEx(key, name)
+            return str(value) if value else default
+        except OSError:
+            return default
+
+    @staticmethod
+    def _extract_exe_path(raw: str) -> str:
+        """Pull a real .exe path out of a messy registry value.
+
+        DisplayIcon is often ``"C:\\path\\app.exe,0"`` or a quoted path;
+        InstallLocation is a bare directory. We extract the first drive-letter
+        path ending in .exe.
+        """
+        if not raw:
+            return ""
+        import re
+        m = re.search(r'([A-Za-z]:[\\/][^\x00-\x1f<>|*?"]*?\.exe)', raw, re.IGNORECASE)
+        if m:
+            return m.group(1).strip('"').strip()
+        return ""
+
+    @classmethod
+    def _find_via_app_paths(cls, name: str) -> Optional[str]:
+        """Query HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths."""
+        if _winreg is None:
+            return None
+        exe_names = cls._app_exe_candidates(name)
+        for exe in exe_names:
+            for hive, flags in (
+                (_winreg.HKEY_LOCAL_MACHINE, _winreg.KEY_READ | _winreg.KEY_WOW64_64KEY),
+                (_winreg.HKEY_LOCAL_MACHINE, _winreg.KEY_READ | _winreg.KEY_WOW64_32KEY),
+                (_winreg.HKEY_CURRENT_USER, _winreg.KEY_READ),
+            ):
+                try:
+                    with _winreg.OpenKey(
+                        hive,
+                        rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}",
+                        0, flags,
+                    ) as key:
+                        default = cls._reg_get(key, "", "")
+                        path = cls._extract_exe_path(default) or default.strip('"')
+                        if path and cls._path_launchable(path):
+                            return f'"{path}"'
+                except OSError:
+                    continue
+        return None
+
+    @classmethod
+    def _app_exe_candidates(cls, name: str) -> list[str]:
+        """Possible .exe filenames for *name* (for App Paths / Store lookup)."""
+        if name in cls.WINDOWS_APPS and cls.WINDOWS_APPS[name]:
+            return [cls.WINDOWS_APPS[name][1]]
+        return [f"{name}.exe"]
 
     @staticmethod
     def _find_via_aliases(name: str) -> list[str]:
@@ -294,6 +427,7 @@ class AppRegistry:
         """
         alias = {
             "微信": "wechat",
+            "wechat": "微信",
             "谷歌浏览器": "chrome",
             "火狐": "firefox",
             "浏览器": "chrome",
@@ -310,7 +444,12 @@ class AppRegistry:
 
     @classmethod
     def _find_via_start_menu(cls, name: str) -> Optional[str]:
-        """Search Start Menu .lnk shortcuts for a matching application."""
+        """Find a matching Start Menu shortcut.
+
+        Windows Shell owns .lnk parsing. Returning the shortcut itself keeps
+        Unicode, arguments, working directory, and app-specific activation
+        behavior intact even where pywin32 is unavailable.
+        """
         search_keys = cls._find_via_aliases(name)
         try:
             import glob
@@ -318,43 +457,42 @@ class AppRegistry:
                 os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs"),
                 os.path.join(os.environ.get("PROGRAMDATA", ""), r"Microsoft\Windows\Start Menu\Programs"),
             ]
-            for d in start_dirs:
-                if not d or not os.path.isdir(d):
+            candidates: list[tuple[int, str]] = []
+            for directory in start_dirs:
+                if not directory or not os.path.isdir(directory):
                     continue
-                candidates: list[tuple[int, str]] = []  # (priority, target)
-                for lnk in glob.glob(os.path.join(d, "**", "*.lnk"), recursive=True):
+                for lnk in glob.glob(os.path.join(directory, "**", "*.lnk"), recursive=True):
                     base = os.path.splitext(os.path.basename(lnk))[0]
-                    base_lower = base.lower()
-                    matched = any(
-                        len(k) >= 2 and k in base_lower for k in search_keys
-                    )
-                    if not matched:
+                    if not cls._display_name_matches(base, search_keys):
                         continue
                     target = _read_lnk_target(lnk)
-                    if not target or not os.path.exists(target):
+                    priority = 5 if "uninstall" in base.lower() else 0
+                    if target and not cls._path_launchable(target):
                         continue
-                    if "uninstall" in target.lower():
-                        candidates.append((5, target))
-                    else:
-                        candidates.append((0, target))
-                if candidates:
-                    candidates.sort(key=lambda c: c[0])
-                    return f'"{candidates[0][1]}"'
+                    candidates.append((priority, lnk))
+            if candidates:
+                candidates.sort(key=lambda item: item[0])
+                return f'"{candidates[0][1]}"'
         except Exception:
             pass
         return None
 
     @staticmethod
     def _find_via_path(name: str) -> Optional[str]:
-        """Try ``where <name>`` to find the executable on PATH."""
+        """Find a real executable, cmd, or bat file on PATH."""
         try:
             result = subprocess.run(
                 ["where", name],
                 capture_output=True, text=True, timeout=5,
                 creationflags=_NO_WINDOW,
             )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip().split("\n")[0]
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    path = line.strip().strip('"')
+                    if not AppRegistry._path_launchable(path):
+                        continue
+                    if os.path.splitext(path)[1].lower() in {".exe", ".cmd", ".bat"}:
+                        return f'"{path}"'
         except Exception:
             pass
         return None
@@ -363,28 +501,23 @@ class AppRegistry:
 
     @classmethod
     def _find_windows_app(cls, name: str) -> str:
-        """Find app on Windows.
+        """Find a verified Windows application launch target.
 
-        Tries each lookup strategy in priority order and returns the first
-        match.  Falls back to a sanitized ``start`` command when nothing is
-        found.
+        Unknown text never becomes a shell command. The caller receives an
+        empty string and can show a useful "not found" message instead.
         """
         for finder in (
             cls._find_via_special,
-            cls._find_via_registry,
             cls._find_via_start_menu,
+            cls._find_via_registry,
+            cls._find_via_app_paths,
+            cls._find_via_uninstall_registry,
             cls._find_via_path,
         ):
             result = finder(name)
             if result is not None:
                 return result
-
-        # Final fallback: sanitize name to prevent shell injection via
-        # metacharacters (P0-1b).
-        safe_name = name
-        for ch in ('"', '&', '|', ';', '^', '<', '>', '%', '!'):
-            safe_name = safe_name.replace(ch, '')
-        return f'start "" "{safe_name}"'
+        return ""
 
     @classmethod
     def _find_macos_app(cls, name: str) -> str:
@@ -489,10 +622,20 @@ class CommandEngine:
         r"\battrib\s+[+-][shr]",              # attrib hide/unhide system files
     ]
 
-    def __init__(self, event_engine=None):
+    def __init__(self, event_engine=None, user_config: dict | None = None):
         self.event_engine = event_engine
+        self.user_config = user_config or {}
         self._command_history = []
-        self._pending_confirmation = None  # Command waiting for user confirmation
+        self._pending_confirmations: list[tuple[str, str]] = []
+
+    @property
+    def _pending_confirmation(self):
+        """Backward-compatible view of the first queued confirmation."""
+        return self._pending_confirmations[0] if self._pending_confirmations else None
+
+    @_pending_confirmation.setter
+    def _pending_confirmation(self, value):
+        self._pending_confirmations = [] if value is None else [value]
 
     def parse_and_execute(self, ai_response: str, auto_confirm: bool = False) -> list:
         """Parse AI response for executable commands and execute them.
@@ -533,19 +676,28 @@ class CommandEngine:
                                           force_confirm=True)
             results.append(result)
 
-        # Execute shell commands — P0-1a: dangerous commands require
-        # confirmation; safe shell commands execute directly
+        # Execute shell commands — every model-generated shell command needs
+        # explicit user approval. A blacklist is not a security boundary.
         for cmd in shell_matches:
             cmd = cmd.strip()
             result = self.execute_shell(cmd, auto_confirm=auto_confirm,
-                                        force_confirm=False)
+                                        force_confirm=True)
             results.append(result)
 
-        # Execute Claude Code commands
+        # Claude Code can modify files and run tools, so it also requires
+        # explicit approval before leaving the chat response parser.
         for instruction in claude_matches:
             instruction = instruction.strip()
-            result = self.execute_claude_code(instruction)
-            results.append(result)
+            if not auto_confirm:
+                self._pending_confirmations.append(("claude", instruction))
+                results.append(CommandResult(
+                    success=False,
+                    command=f"claude: {instruction}",
+                    error="🔒 Claude Code 操作需要确认才能执行。",
+                    requires_confirmation=True,
+                ))
+            else:
+                results.append(self.execute_claude_code(instruction))
 
         # If no tagged commands found, try natural language parsing
         if not results:
@@ -554,6 +706,25 @@ class CommandEngine:
                 results.append(result)
 
         return results
+
+    @staticmethod
+    def _external_launch_env() -> dict[str, str]:
+        """Return an environment safe for launching non-BuddyDesk apps.
+
+        BuddyDesk pins PySide6's Qt plugin directory at startup. External Qt
+        applications such as WeChat must not inherit that path: loading a
+        PySide6 `qwindows.dll` into WeChat produces its "no Qt platform
+        plugin could be initialized" crash dialog.
+        """
+        env = os.environ.copy()
+        for key in (
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            "QT_PLUGIN_PATH",
+            "QT_QPA_PLATFORM",
+            "QT_DEBUG_PLUGINS",
+        ):
+            env.pop(key, None)
+        return env
 
     def open_app(self, app_name: str) -> CommandResult:
         """Open an application by name.
@@ -573,32 +744,49 @@ class CommandEngine:
                 error=f"未找到应用: {app_name}",
             )
 
+        # Only verified files and a small system-command allowlist reach this
+        # method. Never re-interpret a discovered path as shell text.
+        _SYSTEM_COMMANDS = {"cmd", "explorer", "calc", "notepad", "snippingtool", "powershell"}
+
         try:
             if sys.platform == "win32":
-                # Try shell=False first for safety; fall back to shell=True
-                # only for commands that genuinely need the shell (start, cmd,
-                # explorer, calc, and other built-in shell commands).
-                _needs_shell = (
-                    cmd.startswith("start ")
-                    or cmd in ("cmd", "explorer", "calc", "notepad",
-                               "snippingtool", "powershell")
-                )
-                if not _needs_shell:
-                    # Extract executable from quoted path (e.g. '"C:\...\app.exe"')
-                    exe_path = cmd.strip().strip('"')
+                external_env = self._external_launch_env()
+                if cmd in _SYSTEM_COMMANDS:
                     subprocess.Popen(
-                        [exe_path],
+                        [cmd],
                         shell=False,
                         creationflags=_NO_WINDOW,
+                        env=external_env,
                     )
+                elif cmd.startswith('"') and cmd.endswith('"'):
+                    launch_path = cmd[1:-1]
+                    extension = os.path.splitext(launch_path)[1].lower()
+                    if not AppRegistry._path_launchable(launch_path):
+                        raise FileNotFoundError(launch_path)
+                    if extension in {".lnk", ".cmd", ".bat"}:
+                        # os.startfile() cannot receive an isolated env. Launch
+                        # through cmd/start with the cleaned child environment
+                        # so Qt apps never inherit BuddyDesk's PySide6 plugins.
+                        subprocess.Popen(
+                            ["cmd", "/d", "/s", "/c", "start", "", launch_path],
+                            shell=False,
+                            creationflags=_NO_WINDOW,
+                            env=external_env,
+                        )
+                    elif extension == ".exe":
+                        subprocess.Popen(
+                            [launch_path],
+                            shell=False,
+                            cwd=os.path.dirname(launch_path) or None,
+                            creationflags=_NO_WINDOW,
+                            env=external_env,
+                        )
+                    else:
+                        raise ValueError(f"不支持的应用类型: {extension or '无扩展名'}")
                 else:
-                    subprocess.Popen(
-                        cmd,
-                        shell=True,
-                        creationflags=_NO_WINDOW,
-                    )
+                    raise ValueError("未验证的应用启动目标")
             else:
-                # macOS/Linux: 'open -a' and bare commands need the shell
+                # macOS/Linux: 'open -a' and bare commands need the shell.
                 subprocess.Popen(cmd, shell=True)
 
             if self.event_engine:
@@ -616,6 +804,18 @@ class CommandEngine:
                 output=f"已打开: {app_name}",
             )
 
+        except FileNotFoundError as e:
+            return CommandResult(
+                success=False,
+                command=f"open:{app_name}",
+                error=f"应用文件不存在: {e}",
+            )
+        except PermissionError as e:
+            return CommandResult(
+                success=False,
+                command=f"open:{app_name}",
+                error=f"权限不足，无法启动 {app_name}: {e}",
+            )
         except Exception as e:
             return CommandResult(
                 success=False,
@@ -639,17 +839,19 @@ class CommandEngine:
         # the caller explicitly set auto_confirm (e.g. user replied "确认执行").
         is_dangerous = self._is_dangerous(cmd)
         if not auto_confirm and (force_confirm or is_dangerous):
-            self._pending_confirmation = cmd
+            self._pending_confirmations.append(("shell", cmd))
             if is_dangerous:
                 return CommandResult(
                     success=False,
                     command=cmd,
                     error="⚠️ 危险命令，需要确认才能执行。请在聊天中回复'确认执行'。",
+                    requires_confirmation=True,
                 )
             return CommandResult(
                 success=False,
                 command=cmd,
                 error="🔒 命令需要确认才能执行。请在聊天中回复'确认执行'。",
+                requires_confirmation=True,
             )
 
         try:
@@ -731,7 +933,7 @@ class CommandEngine:
                 from engine.event_engine import EventEngine
                 self.event_engine.record("command_execute", {
                     "type": "shell",
-                    "command": cmd,
+                    "command": _redact_command(cmd),
                     "success": success,
                 })
 
@@ -770,7 +972,7 @@ class CommandEngine:
         Returns:
             CommandResult with execution status
         """
-        claude_path = config.CLAUDE_CLI_PATH
+        claude_path = self.user_config.get("claude_cli_path") or config.CLAUDE_CLI_PATH
 
         try:
             # Use claude --print for non-interactive mode
@@ -791,7 +993,7 @@ class CommandEngine:
                 from engine.event_engine import EventEngine
                 self.event_engine.record("command_execute", {
                     "type": "claude_code",
-                    "instruction": instruction,
+                    "instruction": _redact_command(instruction),
                     "success": success,
                 })
 
@@ -822,19 +1024,21 @@ class CommandEngine:
             )
 
     def confirm_pending(self) -> CommandResult:
-        """Confirm and execute the pending dangerous command."""
-        if not self._pending_confirmation:
+        """Confirm and execute the oldest pending shell or Claude operation."""
+        if not self._pending_confirmations:
             return CommandResult(
                 success=False,
                 error="没有待确认的命令",
             )
-        cmd = self._pending_confirmation
-        self._pending_confirmation = None
-        return self.execute_command(cmd, auto_confirm=True)
+        kind, value = self._pending_confirmations.pop(0)
+        if kind == "claude":
+            return self.execute_claude_code(value)
+        return self.execute_command(value, auto_confirm=True)
 
     def cancel_pending(self):
-        """Cancel the pending dangerous command."""
-        self._pending_confirmation = None
+        """Cancel the oldest pending operation."""
+        if self._pending_confirmations:
+            self._pending_confirmations.pop(0)
 
     def _is_dangerous(self, cmd: str) -> bool:
         """Check if a command is potentially dangerous."""

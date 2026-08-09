@@ -15,6 +15,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QToolButton, QSizePolicy, QPushButton, QPlainTextEdit, QScrollArea,
+    QApplication,
 )
 
 from theme import (
@@ -54,15 +55,16 @@ class ChatBaseWindow(QWidget):
         super().__init__(parent)
         self._drag_pos: QPoint | None = None
         self._fade: QPropertyAnimation | None = None
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
-        )
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
     def show(self):
         if self._fade and self._fade.state() == QPropertyAnimation.State.Running:
             self._fade.stop()
         self.setWindowOpacity(0)
         super().show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus()
         self._apply_rounded_mask()
         self._fade = QPropertyAnimation(self, b"windowOpacity")
         self._fade.setDuration(self.FADE_MS)
@@ -463,12 +465,19 @@ class _MessageBubble(QFrame):
         return btn
 
     def _on_task_pin(self, task: dict):
-        """P3-4: Pin 任务到桌面。"""
-        main_app = self._find_main_app()
+        """P3-4: Pin 任务到桌面。
+
+        Pin 能力属于 ChatWindow（通过其 `_main_app` 暴露的 pin_manager）。
+        沿父链找到宿主窗口再调用，而不是在本气泡上调用不存在的方法。
+        """
+        w = self._find_chat_window()
+        if w is None:
+            return
+        main_app = w._find_main_app()
         if main_app and main_app.pin_manager:
             text = f"📋 任务: {task.get('title', '')}\nmode: {task.get('mode', 'claude_code')}\n难度: {task.get('difficulty', 1)}/5"
-            main_app.pin_manager.pin(text, self._active_idx)
-            self._sys(f"📌 任务已 Pin")
+            main_app.pin_manager.pin(text, getattr(w, "_active_idx", 0))
+            w._sys(f"📌 任务已 Pin")
 
     def _on_task_dispatch(self, task: dict):
         """P3-4: 把任务作为新消息发出去（派给当前 backend）。"""
@@ -554,15 +563,28 @@ class _MessageBubble(QFrame):
         if hasattr(self, "_text"):
             self._bubble.setText(self._renderer.render(self._text))
 
+    def _find_chat_window(self):
+        """Walk up the parent chain to the owning ChatWindow.
+
+        Duck-typed on attributes the host exposes so this module never needs
+        to import ChatWindow (avoiding a circular import).
+        """
+        w = self.parentWidget()
+        depth = 0
+        while w is not None and depth < 8:
+            if hasattr(w, "_find_main_app") and hasattr(w, "_sys"):
+                return w
+            w = w.parentWidget()
+            depth += 1
+        return None
+
     def _copy_text(self):
         QApplication.clipboard().setText(self._text)
 
     def _regen(self):
-        # Bubble up to parent ChatWindow
-        w = self.parent()
-        while w and not isinstance(w, ChatWindow):
-            w = w.parent()
-        if w:
+        # Bubble up to the owning ChatWindow via duck-typed lookup
+        w = self._find_chat_window()
+        if w is not None and hasattr(w, "_regenerate"):
             w._regenerate()
 
     def enterEvent(self, _e):

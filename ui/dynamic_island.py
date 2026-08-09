@@ -5,12 +5,13 @@ Every state is drawn in paintEvent. Zero child widgets, zero layouts.
 Single QTimer drives all animations. QPainterPath clips for smooth
 rounded corners (no jagged edges).
 """
-import math, random
+import math, random, time
 
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QDateTime
 from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, Property
 from PySide6.QtGui import (
-    QPainter, QColor, QPen, QBrush, QRadialGradient, QPainterPath, QFont, QFontMetrics,
+    QPainter, QColor, QPen, QBrush, QRadialGradient, QLinearGradient,
+    QPainterPath, QFont, QFontMetrics,
 )
 from PySide6.QtWidgets import QWidget
 
@@ -23,6 +24,8 @@ from theme import (
 DIMS = {
     "idle": (200, 38), "thinking": (340, 52), "result": (320, 52),
     "notify": (280, 52), "error": (300, 52),
+    # Voice is intentionally compact: one centered island, not a second card.
+    "voice_recording": (282, 48), "voice_processing": (282, 48),
 }
 ANIM_MS = 400
 AUTO_MS = 3500
@@ -65,6 +68,8 @@ class DynamicIsland(QWidget):
         self._detail = ""          # dynamic sub-text for result/notify/error
         self._idle_label = None    # hover text override for idle
         self._state_start = 0.0    # _phase when current state started
+        self._voice_levels = [0.0] * 7
+        self._voice_started_at = 0.0
 
         # Timers — start at slow rate (idle state default)
         self._tick_tmr = QTimer(self, timeout=self._tick); self._tick_tmr.start(200)
@@ -99,6 +104,29 @@ class DynamicIsland(QWidget):
         self._tick_tmr.setInterval(16 if fast else 200)
 
     # ── State machine ────────────────────────────────────────────────
+
+    def set_voice_level(self, level: float):
+        """Update the compact voice waveform inside the island."""
+        value = max(0.0, min(1.0, float(level)))
+        self._voice_levels.append(value)
+        self._voice_levels = self._voice_levels[-7:]
+        if self._state == "voice_recording":
+            self.update()
+
+    def set_voice_recording(self):
+        """Switch the island into the active microphone state."""
+        self._voice_started_at = time.monotonic()
+        self._voice_levels = [0.0] * 7
+        self.set_state("voice_recording")
+
+    def set_voice_processing(self):
+        """Show recognition progress using the island's own pulse animation."""
+        self.set_state("voice_processing")
+
+    def clear_voice_state(self):
+        """Return the island to its normal idle state after voice input."""
+        if self._state in ("voice_recording", "voice_processing"):
+            self.set_state("idle")
 
     def set_state(self, state: str, text: str = ""):
         if state not in DIMS:
@@ -179,8 +207,15 @@ class DynamicIsland(QWidget):
 
     def _get_aw(self): return self._w
     def _set_aw(self, v):
+        old_w = self.width()
+        center_x = self.x() + old_w / 2.0
         self._w = v; ww = int(round(v))
         self.setFixedWidth(ww); self.setMinimumWidth(ww); self.setMaximumWidth(ww)
+        # Width animations used to grow to the right, making the voice state
+        # visibly drift off the screen centre. Keep the island's centre fixed
+        # for every animation frame (manual dragging still remains supported).
+        if ww != old_w:
+            self.move(int(round(center_x - ww / 2.0)), self.y())
     aw = Property(float, _get_aw, _set_aw)
 
     def _get_ah(self): return self._h
@@ -214,20 +249,34 @@ class DynamicIsland(QWidget):
         for i, a in enumerate((28, 18, 10)):
             p.setBrush(QColor(0, 0, 0, a))
             p.drawRoundedRect(QRectF(2, 2 + i * 2, w, h), r, r)
-        p.setBrush(QColor(WHITE))
+        # Frosted-glass body: translucent enough to pick up the desktop behind
+        # it, but with a milky base so small labels remain legible. Qt cannot
+        # blur the desktop backdrop portably, so the layered alpha gradients
+        # provide the same visual cue without another heavyweight window.
+        glass = QLinearGradient(0, 0, 0, h)
+        glass.setColorAt(0.0, QColor(255, 255, 255, 222))
+        glass.setColorAt(0.45, QColor(247, 250, 248, 202))
+        glass.setColorAt(1.0, QColor(231, 239, 235, 214))
+        p.setBrush(glass)
         p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
 
-        # Highlight
-        sg = QRadialGradient(w / 2, -h * 0.3, h * 1.6)
-        sg.setColorAt(0, QColor(255, 255, 255, 200))
-        sg.setColorAt(1, Qt.GlobalColor.transparent)
-        p.setBrush(sg); p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
+        # Top sheen and a quiet lower refraction line make the surface read as
+        # glass rather than a flat white pill.
+        sheen = QLinearGradient(0, 0, 0, h * 0.58)
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 118))
+        sheen.setColorAt(0.55, QColor(255, 255, 255, 26))
+        sheen.setColorAt(1.0, Qt.GlobalColor.transparent)
+        p.setBrush(sheen); p.drawRoundedRect(QRectF(1, 1, w - 2, h * 0.58), r, r)
+        p.setPen(QPen(QColor(255, 255, 255, 130), 1))
+        p.drawLine(QPointF(r, h - 1.2), QPointF(w - r, h - 1.2))
 
         # State glow
         glow_map = {
             "idle": QColor(92, 184, 154, 30), "thinking": QColor(92, 184, 154, 60),
             "result": QColor(74, 175, 136, 60), "notify": QColor(184, 166, 106, 60),
             "error": QColor(212, 122, 114, 60),
+            "voice_recording": QColor(92, 184, 154, 72),
+            "voice_processing": QColor(184, 166, 106, 72),
         }
         gc = glow_map.get(self._state)
         if gc:
@@ -248,10 +297,12 @@ class DynamicIsland(QWidget):
             self._draw_notify(p, w, h, cx, cy)
         elif self._state == "error":
             self._draw_error(p, w, h, cx, cy)
+        elif self._state in ("voice_recording", "voice_processing"):
+            self._draw_voice(p, w, h, cx, cy)
 
         # Border (drawn AFTER clip so it's always smooth)
         p.setClipping(False)
-        bc = QColor(BORDER) if self._state != "error" else QColor(RED)
+        bc = QColor(255, 255, 255, 210) if self._state != "error" else QColor(RED)
         p.setBrush(Qt.BrushStyle.NoBrush); p.setPen(QPen(bc, 1))
         p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), r, r)
         p.end()
@@ -448,6 +499,54 @@ class DynamicIsland(QWidget):
 
         # Pill
         self._draw_pill(p, w - 46, cy, "失败", QColor(RED_SOFT), QColor(RED))
+
+    def _draw_voice(self, p, w, h, cx, cy):
+        """Draw a compact, centred voice state inside the island surface."""
+        active = self._state == "voice_recording"
+        color = QColor(ACCENT if active else GOLD)
+        # The whole composition is laid out from the island centre. This is
+        # deliberately symmetric so the island still feels like one object
+        # while it expands from the idle state.
+        icon_cx = cx - 106
+        icon_r = 14
+        pulse = 0.5 + 0.5 * math.sin(self._phase * 2.6)
+        halo = QColor(color); halo.setAlpha(24 + int(pulse * 18))
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(halo)
+        p.drawEllipse(QPointF(icon_cx, cy), icon_r + 3 + pulse * 2, icon_r + 3 + pulse * 2)
+        badge = QColor(color); badge.setAlpha(34)
+        p.setBrush(badge); p.drawEllipse(QPointF(icon_cx, cy), icon_r, icon_r)
+
+        # Microphone glyph.
+        p.setPen(QPen(color, 1.8)); p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(QRectF(icon_cx - 4, cy - 8, 8, 13), 4, 4)
+        p.drawArc(QRectF(icon_cx - 8, cy - 5, 16, 15), 200 * 16, 140 * 16)
+        p.drawLine(QPointF(icon_cx, cy + 10), QPointF(icon_cx, cy + 12))
+        p.drawLine(QPointF(icon_cx - 4, cy + 13), QPointF(icon_cx + 4, cy + 13))
+
+        tx = cx - 83
+        p.setFont(self._f_label); p.setPen(QColor(TEXT_PRIMARY))
+        title = "正在聆听" if active else "正在识别"
+        p.drawText(QRectF(tx, cy - 11, 76, 15), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, title)
+        p.setFont(self._f_sub); p.setPen(QColor(TEXT_MUTED))
+        sub = "点击停止" if active else "正在整理文字…"
+        p.drawText(QRectF(tx, cy + 3, 82, 13), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, sub)
+
+        # Compact waveform occupies the right half, with a small timer tucked
+        # above it instead of pushing the main label off-centre.
+        wave_left = cx + 14
+        for i, level in enumerate(self._voice_levels):
+            if not active:
+                level = 0.25 + 0.65 * ((math.sin(self._phase * 4 - i * 0.8) + 1) / 2)
+            bar_h = 5 + level * 17
+            x = wave_left + i * 6
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(color.red(), color.green(), color.blue(), 150 + int(level * 90)))
+            p.drawRoundedRect(QRectF(x, cy - bar_h / 2, 3.5, bar_h), 1.75, 1.75)
+
+        if active:
+            elapsed = max(0, int(time.monotonic() - self._voice_started_at))
+            p.setFont(self._f_pill); p.setPen(QColor(TEXT_MUTED))
+            p.drawText(QRectF(cx + 58, cy - 15, 30, 12), Qt.AlignmentFlag.AlignRight, f"{elapsed:02d}s")
 
     # ── Pill helper ──────────────────────────────────────────────────
 

@@ -33,6 +33,18 @@ from ui.chat_widgets import (
     _CommandResult, _make_triangle_icon, _load_cat_avatar,
 )
 
+
+def _normalize_role(role: str) -> str:
+    """Normalize persisted message roles to the display roles used by the UI.
+
+    New replies are persisted with ``role == "ai"``, but legacy data (and some
+    earlier versions) stored ``"assistant"``. Both must render as AI bubbles.
+    """
+    if role == "user":
+        return "user"
+    return "ai"
+
+
 class ChatWindow(ChatBaseWindow):
     """A frameless chat panel with a scrollable message list and conversation tabs."""
 
@@ -299,6 +311,13 @@ class ChatWindow(ChatBaseWindow):
         self._input.send_signal.connect(self._send)
         pill_l.addWidget(self._input, 1)
 
+        from ui.icon_widgets import VoiceButton
+        self._voice_btn = VoiceButton()
+        self._voice_btn.setToolTip("语音输入（Ctrl+Shift+V）")
+        self._voice_btn.setAccessibleName("voiceInputButton")
+        self._voice_btn.clicked.connect(self._on_voice_button)
+        pill_l.addWidget(self._voice_btn)
+
         # Painted triangle icon — no font dependency
         self._send_btn = QPushButton()
         self._send_btn.setFixedSize(34, 34)
@@ -365,7 +384,26 @@ class ChatWindow(ChatBaseWindow):
         # P2-3: Pin 最新 AI 回答到桌面
         QShortcut(QKeySequence("Ctrl+Shift+P"), self, activated=self._on_pin_last)
 
-    # ── P2-3 pin last AI answer ────────────────────────────────────
+    def _on_voice_button(self):
+        """Toggle push-to-talk from the visible microphone control."""
+        main_app = self._find_main_app()
+        voice = getattr(main_app, "voice_input", None) if main_app else None
+        if voice is None or not voice.is_available():
+            self._sys("⚠️ 语音输入不可用，请检查麦克风和 SenseVoice 模型")
+            return
+        if voice._recording:
+            main_app._do_voice_stop()
+            self._voice_btn.set_recording(False)
+            self._voice_btn.setToolTip("语音输入（Ctrl+Shift+V）")
+            return
+        if getattr(voice, "_processing", False) is True:
+            self._voice_btn.setToolTip("正在识别，请稍候")
+            return
+        main_app._on_voice_press()
+        if voice._recording:
+            self._voice_btn.set_recording(True)
+            self._voice_btn.setToolTip("停止录音")
+
     def _on_pin_last(self):
         """⌘⇧P Pin 最新 AI 回答到桌面。"""
         self.pin_last_ai_answer()
@@ -377,7 +415,7 @@ class ChatWindow(ChatBaseWindow):
             return False
         # 从后往前找最后一条 AI 消息
         for m in reversed(self.messages):
-            if m.get("role") == "ai" and m.get("content"):
+            if _normalize_role(m.get("role", "")) == "ai" and m.get("content"):
                 text = m["content"]
                 # 通过 main app 暴露的 pin_manager
                 main_app = self._find_main_app()
@@ -753,12 +791,12 @@ class ChatWindow(ChatBaseWindow):
         """Clear the display and render all *messages* as _MessageBubble widgets."""
         self._clear_message_display()
         for msg in messages:
-            role = msg.get("role", "user")
+            role = _normalize_role(msg.get("role", "user"))
             content = msg.get("content", "")
             time_str = msg.get("time", "")
             if role == "user":
                 self._append_widget(_MessageBubble("user", content, time_str, renderer=self._md))
-            elif role == "assistant":
+            else:
                 self._append_widget(_MessageBubble("ai", content, time_str, renderer=self._md))
 
     # ── message ops (continued) ──
@@ -988,7 +1026,7 @@ class ChatWindow(ChatBaseWindow):
         if self._streaming or not self.messages:
             return
         # Pop assistant messages from history and UI
-        while self.messages and self.messages[-1]["role"] == "ai":
+        while self.messages and _normalize_role(self.messages[-1].get("role", "")) == "ai":
             self.messages.pop()
             for i in range(self._messages_layout.count() - 1, -1, -1):
                 item = self._messages_layout.itemAt(i)

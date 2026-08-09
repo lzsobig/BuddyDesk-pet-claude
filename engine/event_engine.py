@@ -71,10 +71,11 @@ class EventEngine:
 
         with self._lock:
             self.events.append(event)
-            if len(self.events) > config.MAX_EVENT_HISTORY:
+            trimmed = len(self.events) > config.MAX_EVENT_HISTORY
+            if trimmed:
                 self.events = self.events[-config.MAX_EVENT_HISTORY:]
-            # P1-3: save inside the lock to prevent concurrent writes
-            self._save_events()
+            # Trimming changes list offsets, so rewrite the retained window.
+            self._save_events(rewrite=trimmed)
 
         # Fire registered callbacks (outside lock to avoid deadlocks)
         callbacks = self._callbacks.get(event_type, [])
@@ -223,25 +224,21 @@ class EventEngine:
             except IOError:
                 logger.debug("No event log file at %s", config.EVENT_LOG_FILE)
 
-    def _save_events(self):
-        """Persist events to log file (append mode, incremental).
-
-        P1-3: uses self._saved_count to track how many events have been
-        written, avoiding repeated file-line counting. Called inside _lock.
-        """
+    def _save_events(self, rewrite: bool = False):
+        """Persist events incrementally, rewriting after history trimming."""
         try:
             os.makedirs(os.path.dirname(config.EVENT_LOG_FILE), exist_ok=True)
-            # Append only new events since last save
+            if rewrite:
+                with open(config.EVENT_LOG_FILE, "w", encoding="utf-8") as f:
+                    for event in self.events:
+                        f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+                self._saved_count = len(self.events)
+                return
+
             new_events = self.events[self._saved_count:]
             if new_events:
                 with open(config.EVENT_LOG_FILE, "a", encoding="utf-8") as f:
                     for event in new_events:
-                        f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
-                self._saved_count = len(self.events)
-            # If log grew beyond max, rewrite trimmed version
-            if len(self.events) > config.MAX_EVENT_HISTORY:
-                with open(config.EVENT_LOG_FILE, "w", encoding="utf-8") as f:
-                    for event in self.events[-config.MAX_EVENT_HISTORY:]:
                         f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
                 self._saved_count = len(self.events)
         except IOError as e:
