@@ -323,7 +323,7 @@ pre {
 }
 .hero-note {
   font-size: 11px;
-  color: #777c72;
+  color: #61665c;
   margin-top: 22px;
 }
 .hero-visual {
@@ -641,7 +641,7 @@ pre {
 }
 .desktop-note small {
   font-size: 10px;
-  color: #8a8e80;
+  color: #626959;
 }
 .pet-spot {
   position: absolute;
@@ -734,7 +734,7 @@ pre {
   align-items: center;
   justify-content: space-between;
   font-size: 10px;
-  color: #72786b;
+  color: #5e6756;
   gap: 8px;
   margin-top: 18px;
   transform: rotate(1.5deg);
@@ -890,7 +890,7 @@ pre {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
-  color: #607154;
+  color: #4d603f;
   padding-top: 25px;
   gap: 12px;
 }
@@ -1148,7 +1148,7 @@ pre {
 }
 .voice-options .voice-secondary {
   font-size: 11px;
-  color: #7c8670;
+  color: #5b684f;
   margin-top: 17px;
 }
 .voice-options code {
@@ -1206,7 +1206,7 @@ pre {
 .faq-list details p {
   font-size: 12px;
   line-height: 2;
-  color: #667b55;
+  color: #536746;
   padding: 0 18px 22px 0;
 }
 .closing-section {
