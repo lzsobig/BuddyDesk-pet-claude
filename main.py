@@ -48,7 +48,7 @@ if sys.stderr and hasattr(sys.stderr, 'buffer'):
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt, QTimer, QObject, Signal, QLockFile
 from PySide6.QtGui import QIcon, QFont
 
@@ -139,6 +139,7 @@ class BuddyDeskApp:
             return
         self.app.aboutToQuit.connect(self._instance_lock.unlock)
         saved = load_user_config()
+        needs_setup = getattr(sys, "frozen", False) and not self._has_saved_backend(saved)
         if self._background_mode or self._has_saved_backend(saved):
             self._user_config = saved
         else:
@@ -210,6 +211,18 @@ class BuddyDeskApp:
         self.winisland = WinIslandBridge(self)
         from agent_controller import AgentController
         self.agent = AgentController(self)
+        if getattr(sys, "frozen", False) and "--island-running" not in sys.argv:
+            native = Path(sys.executable).parent / "_internal" / "bin" / "WinIsland.exe"
+            if native.is_file():
+                import subprocess
+                try:
+                    subprocess.Popen([str(native), "--companion"], cwd=str(native.parent),
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                except OSError as error:
+                    logger.exception("Bundled WinIsland could not start")
+                    QMessageBox.warning(None, "灵动岛启动失败", "请完整解压发布包后重试。\n" + str(error))
+        if needs_setup:
+            QTimer.singleShot(600, self._open_settings)
 
         # Step 7: Clipboard monitoring (optional)
         self._clipboard_monitor = self._user_config.get("clipboard_monitor", False)

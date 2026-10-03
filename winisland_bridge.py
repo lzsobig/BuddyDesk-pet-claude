@@ -176,6 +176,7 @@ class WinIslandBridge(QObject):
                 "protocol_version": 1,
                 "source_dir": str(Path(__file__).resolve().parent),
                 "python_path": sys.executable,
+                "assistant_executable": sys.executable if getattr(sys, "frozen", False) else None,
             })
             self._clear_failure("integration")
         except OSError as error:

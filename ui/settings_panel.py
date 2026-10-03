@@ -699,7 +699,7 @@ class SettingsPanel(QDialog):
             )
             if enabled:
                 exe = sys.executable
-                entry = f'"{exe}" "{os.path.join(cfg._BASE, "main.py")}"'
+                entry = f'"{exe}"' if getattr(sys, "frozen", False) else f'"{exe}" "{os.path.join(cfg._BASE, "main.py")}"'
                 winreg.SetValueEx(key, "BuddyDesk", 0, winreg.REG_SZ, entry)
             else:
                 try:

@@ -73,6 +73,8 @@ struct Integration {
     protocol_version: u32,
     source_dir: PathBuf,
     python_path: PathBuf,
+    #[serde(default)]
+    assistant_executable: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -228,7 +230,7 @@ impl Companion {
         if self.happy_until.is_some_and(|until| now >= until) {
             self.happy_until = None;
         }
-        if !self.startup_attempted {
+        if !self.startup_attempted && !self.connected {
             self.startup_attempted = true;
             if self.child.is_none()
                 && let Err(error) = self.spawn_assistant(true)
@@ -486,26 +488,47 @@ impl Companion {
     fn spawn_assistant(&mut self, background: bool) -> Result<(), String> {
         let directory = self.directory.as_ref().ok_or("无法找到用户配置目录")?;
         let integration = read_json::<Integration>(&directory.join("integration.json")).ok();
-        let (source, python) = match integration {
-            Some(integration) if integration.protocol_version == PROTOCOL_VERSION => {
-                (integration.source_dir, integration.python_path)
+        let packaged = std::env::current_exe().ok().and_then(|executable| {
+            executable
+                .parent()?
+                .ancestors()
+                .take(3)
+                .map(|directory| directory.join("BuddyDesk.exe"))
+                .find(|path| path.is_file())
+        });
+        let integrated = integration
+            .as_ref()
+            .filter(|integration| integration.protocol_version == PROTOCOL_VERSION)
+            .and_then(|integration| integration.assistant_executable.as_ref())
+            .filter(|path| path.is_absolute() && path.is_file());
+        let mut process = if let Some(executable) = packaged.as_ref().or(integrated) {
+            let mut process = Command::new(executable);
+            process.arg("--island-running");
+            if let Some(directory) = executable.parent() {
+                process.current_dir(directory);
             }
-            _ => (
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .parent()
-                    .ok_or("找不到聊天助手")?
-                    .join("BuddyDesk-pet-claude-recovered"),
-                PathBuf::from("pythonw.exe"),
-            ),
+            process
+        } else {
+            let (source, python) = match integration {
+                Some(integration) if integration.protocol_version == PROTOCOL_VERSION => {
+                    (integration.source_dir, integration.python_path)
+                }
+                _ => (
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .parent()
+                        .ok_or("找不到聊天助手")?
+                        .join("BuddyDesk-pet-claude-recovered"),
+                    PathBuf::from("pythonw.exe"),
+                ),
+            };
+            if !source.join("main.py").is_file() {
+                return Err("先运行一次 BuddyDesk，连接后即可从这里打开聊天".into());
+            }
+            let mut process = Command::new(python);
+            process.arg(source.join("main.py")).current_dir(source);
+            process
         };
-        if !source.join("main.py").is_file() {
-            return Err("先运行一次 BuddyDesk，连接后即可从这里打开聊天".into());
-        }
-        let mut process = Command::new(python);
-        process
-            .arg(source.join("main.py"))
-            .arg("--winisland")
-            .current_dir(source);
+        process.arg("--winisland");
         if background {
             process.arg("--background");
         }
@@ -517,7 +540,7 @@ impl Companion {
         self.child = Some(
             process
                 .spawn()
-                .map_err(|_| "聊天助手启动失败，请检查 Python 路径")?,
+                .map_err(|_| "聊天助手启动失败，请检查程序路径")?,
         );
         self.error = None;
         self.launching_since = (!background || !self.connected).then(Instant::now);

@@ -6,9 +6,21 @@ places Analysis datas below ``_internal`` for onedir builds, so the source
 assets directory is mapped to the ``assets`` destination here.
 """
 from pathlib import Path
+import os
 
 ROOT = Path(SPEC).parent
 assets = ROOT / "assets"
+native_candidates = [
+    ROOT / "winisland" / "build" / "WinIsland.exe",
+    ROOT / "winisland" / "target" / "release" / "WinIsland.exe",
+    ROOT.parent / "WinIsland-1.4.0" / "build" / "WinIsland.exe",
+]
+native = Path(os.environ["BUDDYDESK_WINISLAND_EXE"]) if os.environ.get("BUDDYDESK_WINISLAND_EXE") else next((path for path in native_candidates if path.is_file()), None)
+if native is None or not native.is_file():
+    raise FileNotFoundError("Build WinIsland first or set BUDDYDESK_WINISLAND_EXE to its release executable")
+runtime_assets = [(str(path), str(Path("assets") / path.relative_to(assets).parent))
+                  for path in assets.rglob("*") if path.is_file()
+                  and "motion-source" not in path.relative_to(assets).parts]
 
 # Keep this list explicit. Recursive collection of the project packages makes
 # PyInstaller inspect unrelated packages installed in the developer's Python
@@ -22,13 +34,16 @@ hiddenimports = [
     "soundfile",
     "onnxruntime",
     "kaldi_native_fbank",
+    "fitz",
+    "docx",
+    "openpyxl",
 ]
 
 analysis = Analysis(
     [str(ROOT / "launch.py")],
     pathex=[str(ROOT)],
-    binaries=[],
-    datas=[(str(assets), "assets")],
+    binaries=[(str(native), "bin")],
+    datas=runtime_assets,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

@@ -30,6 +30,8 @@ _bootstrap_qt()
 
 if getattr(sys, 'frozen', False):
     os.chdir(os.path.dirname(sys.executable))
+    if os.path.isfile(os.path.join(os.path.dirname(sys.executable), "_internal", "bin", "WinIsland.exe")) and "--winisland" not in sys.argv:
+        sys.argv.append("--winisland")
 else:
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
