@@ -2,7 +2,7 @@ use crate::utils::color::SettingsTheme;
 use crate::utils::settings_ui::settings_color;
 use winisland_core::config::{
     ResourceMetricKind, ResourceMetricStyle, WIDGET_GRID_SLOTS, WidgetKind, place_builtin_widget,
-    set_resource_widget_span, span_cells,
+    set_resource_widget_span, widget_resize_fits,
 };
 use winisland_core::i18n::tr;
 use winisland_render::text::{DrawTextCachedParams, FontManager};
@@ -296,37 +296,40 @@ impl SettingsApp {
     }
 
     fn resize_resource_widget(&mut self, columns: usize, rows: usize) {
-        let span = set_resource_widget_span(columns, rows);
+        let columns = columns.clamp(1, 3);
+        let span = (columns, rows.clamp(1, 3).min(6 / columns));
+        let current_anchor = self.config.widget_layout.iter().find_map(|entry| {
+            (entry.widget == Some(WidgetKind::ResourceUsage)).then_some(entry.slot)
+        });
+        let target = current_anchor.and_then(|current| {
+            std::iter::once(current)
+                .chain(0..WIDGET_GRID_SLOTS)
+                .find(|candidate| {
+                    widget_resize_fits(
+                        &self.config.widget_layout,
+                        &self.config.plugin_widget_layout,
+                        &self.plugin_widgets,
+                        WidgetKind::ResourceUsage,
+                        *candidate,
+                        span,
+                    )
+                })
+        });
+        if current_anchor.is_some() && target.is_none() {
+            return;
+        }
+        set_resource_widget_span(span.0, span.1);
         self.config.resource_widget_columns = span.0;
         self.config.resource_widget_rows = span.1;
-        let Some(current_anchor) = self.config.widget_layout.iter().find_map(|entry| {
-            (entry.widget == Some(WidgetKind::ResourceUsage)).then_some(entry.slot)
-        }) else {
-            return;
-        };
-        let settings_slot =
-            self.config.widget_layout.iter().find_map(|entry| {
-                (entry.widget == Some(WidgetKind::Settings)).then_some(entry.slot)
-            });
-        let current = span_cells(current_anchor, span)
-            .first()
-            .copied()
-            .unwrap_or(current_anchor);
-        let target = std::iter::once(current)
-            .chain(0..WIDGET_GRID_SLOTS)
-            .find(|candidate| {
-                let cells = span_cells(*candidate, span);
-                cells.first() == Some(candidate)
-                    && !settings_slot.is_some_and(|slot| cells.contains(&slot))
-            })
-            .unwrap_or(current);
-        place_builtin_widget(
-            &mut self.config.widget_layout,
-            &mut self.config.plugin_widget_layout,
-            &self.plugin_widgets,
-            WidgetKind::ResourceUsage,
-            target,
-        );
+        if let Some(target) = target {
+            place_builtin_widget(
+                &mut self.config.widget_layout,
+                &mut self.config.plugin_widget_layout,
+                &self.plugin_widgets,
+                WidgetKind::ResourceUsage,
+                target,
+            );
+        }
     }
 
     pub(crate) fn draw_resource_editor(

@@ -185,7 +185,7 @@ impl App {
                         let target_h = if input_active {
                             self.input_target_size().1
                         } else {
-                            (self.config.expanded_height
+                            (self.expanded_content_height()
                                 + crate::ui::expanded::today_section::height(
                                     self.agent.snapshot(),
                                     self.agent.connected(),
@@ -458,7 +458,7 @@ impl App {
                                             font_size: self.config.font_size,
                                             dt,
                                             expanded_width: self.config.expanded_width,
-                                            expanded_height: self.config.expanded_height,
+                                            expanded_height: self.expanded_content_height(),
                                             widget_layout: if compact_components_hidden {
                                                 &[]
                                             } else {

@@ -39,7 +39,7 @@ pub struct AppConfig {
     #[educe(Default = 360.0)]
     #[setting(number(min = 200.0, max = 2000.0, step = 10.0))]
     pub expanded_width: f32,
-    #[educe(Default = 200.0)]
+    #[educe(Default = 260.0)]
     #[setting(number(min = 100.0, max = 1000.0, step = 10.0))]
     pub expanded_height: f32,
     #[educe(Default = true)]
@@ -152,6 +152,7 @@ pub struct AppConfig {
     pub brightness_overlay_enabled: bool,
     #[educe(Default(expression = default_widget_layout()))]
     pub widget_layout: Vec<WidgetSlot>,
+    pub widget_sizes: Vec<WidgetSize>,
     pub plugin_widget_layout: Vec<PluginWidgetSlot>,
     pub compact_widget_layout: Vec<CompactWidgetSlot>,
     #[educe(Default(expression = default_resource_metrics()))]
@@ -160,7 +161,7 @@ pub struct AppConfig {
     pub compact_resource_metrics: Vec<ResourceMetricConfig>,
     #[educe(Default = 2)]
     pub resource_widget_columns: usize,
-    #[educe(Default = 1)]
+    #[educe(Default = 2)]
     pub resource_widget_rows: usize,
     #[serde(default)]
     #[educe(Default(expression = CONFIG_VERSION))]

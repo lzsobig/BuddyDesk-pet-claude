@@ -1306,6 +1306,7 @@ class TaskStore:
         return {
             "tasks": snapshot_tasks,
             "total_count": len(tasks),
+            "pending_count": sum(task["status"] == "pending" for task in tasks),
             "completed_today": completed_today,
             "next_reminder": next_reminder["trigger_at"] if next_reminder else "",
             "reminder_id": next_reminder["id"] if next_reminder else "",

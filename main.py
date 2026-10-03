@@ -35,6 +35,9 @@ def _bootstrap_qt():
 
 _bootstrap_qt()
 
+from ui.windows_identity import set_app_identity
+set_app_identity()
+
 # Let Qt handle DPI awareness natively — avoids the
 # "SetProcessDpiAwarenessContext() failed: 拒绝访问" warning that occurs
 # when both our shcore call and Qt's internal init compete for the same setting.
@@ -85,6 +88,8 @@ class BuddyDeskApp:
     def __init__(self):
         # 复用已存在的 QApplication（如有），避免双实例错误
         self.app = QApplication.instance() or QApplication(sys.argv)
+        self.app.setApplicationName("BuddyDesk")
+        self.app.setOrganizationName("BuddyDesk")
         self._winisland_mode = "--winisland" in sys.argv
         self._show_chat_on_start = "--show-chat" in sys.argv
         self._background_mode = "--background" in sys.argv or not self._show_chat_on_start
@@ -92,8 +97,7 @@ class BuddyDeskApp:
         self._instance_lock = None
 
         # Set app icon (taskbar + Alt-Tab)
-        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "assets", "buddydesk.ico")
+        _icon_path = os.path.join(cfg.ASSETS_DIR, "buddydesk.ico")
         if os.path.exists(_icon_path):
             self.app.setWindowIcon(QIcon(_icon_path))
 
@@ -111,6 +115,7 @@ class BuddyDeskApp:
         self.tray = None
         self.winisland = None
         self._settings_dialog = None
+        self._settings_dock = None
         self.pin_manager = None  # P2-3
         self.voice_input = None  # P3-6
         self.agent = None
@@ -209,6 +214,9 @@ class BuddyDeskApp:
         self.bridge.state_changed.connect(self._on_state_change)
         from winisland_bridge import WinIslandBridge
         self.winisland = WinIslandBridge(self)
+        if self._winisland_mode:
+            from ui.native_settings import NativeSettingsDock
+            self._settings_dock = NativeSettingsDock(self)
         from agent_controller import AgentController
         self.agent = AgentController(self)
         if getattr(sys, "frozen", False) and "--island-running" not in sys.argv:
@@ -279,19 +287,47 @@ class BuddyDeskApp:
         """Open the settings panel dialog."""
         if not self.bridge:
             return
+        page = page if type(page) is int and 0 <= page < 4 else 0
         if self._settings_dialog is not None:
             self._settings_dialog._select_settings_page(page)
             self._settings_dialog.showNormal()
             self._settings_dialog.raise_()
             self._settings_dialog.activateWindow()
             return
+        if self._settings_dock is not None:
+            request_id = self._settings_dock.request(page)
+            if request_id is not None:
+                QTimer.singleShot(2000, lambda: self._fallback_settings(page, request_id))
+                return
+        self._show_settings_dialog(page)
+
+    def _fallback_settings(self, page, request_id):
+        if self._settings_dock is not None and self._settings_dock.needs_fallback(request_id):
+            self._show_settings_dialog(page)
+
+    def _show_settings_dialog(self, page):
+        if self._settings_dialog is not None:
+            self._settings_dialog._select_settings_page(page)
+            self._settings_dialog.showNormal()
+            self._settings_dialog.raise_()
+            self._settings_dialog.activateWindow()
+            return
+        if self._settings_dock is not None:
+            self._settings_dock.suspended = True
+            self._settings_dock.poll()
         dlg = SettingsPanel(self._user_config, parent=self.chat if self.chat and self.chat.isVisible() else None)
         self._settings_dialog = dlg
         dlg._select_settings_page(page)
-        dlg.saved.connect(self._on_settings_saved)
+        def saved(new_config):
+            self._on_settings_saved(new_config)
+            if self._settings_dock is not None:
+                self._settings_dock.discard_panel()
+        dlg.saved.connect(saved)
         def finished(_result):
             if self._settings_dialog is dlg:
                 self._settings_dialog = None
+            if self._settings_dock is not None:
+                self._settings_dock.suspended = False
             dlg.deleteLater()
         dlg.finished.connect(finished)
         dlg.setModal(False)
@@ -346,6 +382,8 @@ class BuddyDeskApp:
             self.bridge.user_config = new_config
         if self._settings_dialog:
             self._settings_dialog.apply_external_pet_settings(new_config, key)
+        if self._settings_dock and self._settings_dock.panel:
+            self._settings_dock.panel.apply_external_pet_settings(new_config, key)
         if self.chat:
             self.chat._pet_title.setText(str(new_config.get("pet_name", "小橘")))
             self.chat._refresh_pet_avatar()

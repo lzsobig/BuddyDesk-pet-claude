@@ -124,6 +124,10 @@ pub fn load_config_at(path: &Path) -> AppConfig {
         config.resource_widget_rows = resource_span.1;
         migrated = true;
     }
+    crate::config::apply_widget_sizes(&config.widget_sizes);
+    if crate::config::normalize_widget_layout(&mut config.widget_layout) {
+        migrated = true;
+    }
     if config.island_style == "mica" {
         config.island_style = "default".to_string();
         migrated = true;

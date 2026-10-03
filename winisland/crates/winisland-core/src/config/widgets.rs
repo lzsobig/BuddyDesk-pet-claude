@@ -8,15 +8,78 @@ pub enum WidgetKind {
     Calendar,
     ResourceUsage,
     Settings,
+    Network,
+    Storage,
+    Today,
 }
 
 impl WidgetKind {
     pub fn span(self) -> (usize, usize) {
+        if self == Self::ResourceUsage {
+            return resource_widget_span();
+        }
+        let encoded = WIDGET_SPANS[self.index()].load(Ordering::Relaxed);
+        ((encoded >> 4) as usize, (encoded & 15) as usize)
+    }
+
+    pub const fn index(self) -> usize {
         match self {
-            Self::Clock => (2, 1),
-            Self::ResourceUsage => resource_widget_span(),
-            Self::Calendar => (2, 2),
-            Self::Settings => (1, 1),
+            Self::Clock => 0,
+            Self::Calendar => 1,
+            Self::ResourceUsage => 2,
+            Self::Settings => 3,
+            Self::Network => 4,
+            Self::Storage => 5,
+            Self::Today => 6,
+        }
+    }
+}
+
+static WIDGET_SPANS: [AtomicU8; 7] = [
+    AtomicU8::new(0x22),
+    AtomicU8::new(0x22),
+    AtomicU8::new(0x22),
+    AtomicU8::new(0x11),
+    AtomicU8::new(0x21),
+    AtomicU8::new(0x21),
+    AtomicU8::new(0x21),
+];
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct WidgetSize {
+    pub widget: WidgetKind,
+    pub columns: usize,
+    pub rows: usize,
+}
+
+pub fn set_widget_span(widget: WidgetKind, columns: usize, rows: usize) -> (usize, usize) {
+    if widget == WidgetKind::Settings {
+        return (1, 1);
+    }
+    if widget == WidgetKind::ResourceUsage {
+        return set_resource_widget_span(columns, rows);
+    }
+    let span = (
+        columns.clamp(1, WIDGET_GRID_COLS),
+        rows.clamp(1, WIDGET_GRID_ROWS),
+    );
+    WIDGET_SPANS[widget.index()].store(((span.0 as u8) << 4) | span.1 as u8, Ordering::Relaxed);
+    span
+}
+
+pub fn apply_widget_sizes(sizes: &[WidgetSize]) {
+    for kind in AVAILABLE_WIDGETS {
+        if kind != WidgetKind::ResourceUsage {
+            let default = match kind {
+                WidgetKind::Clock | WidgetKind::Calendar => (2, 2),
+                _ => (2, 1),
+            };
+            set_widget_span(kind, default.0, default.1);
+        }
+    }
+    for size in sizes {
+        if size.widget != WidgetKind::ResourceUsage {
+            set_widget_span(size.widget, size.columns, size.rows);
         }
     }
 }
@@ -77,7 +140,7 @@ pub enum ResourceMetricStyle {
     Ring,
 }
 
-static RESOURCE_WIDGET_SPAN: AtomicU8 = AtomicU8::new((2 << 4) | 1);
+static RESOURCE_WIDGET_SPAN: AtomicU8 = AtomicU8::new((2 << 4) | 2);
 
 pub fn set_resource_widget_span(columns: usize, rows: usize) -> (usize, usize) {
     let columns = columns.clamp(1, 3);
@@ -230,6 +293,9 @@ where
         "calendar" => Some(WidgetKind::Calendar),
         "resource_usage" => Some(WidgetKind::ResourceUsage),
         "settings" => Some(WidgetKind::Settings),
+        "network" => Some(WidgetKind::Network),
+        "storage" => Some(WidgetKind::Storage),
+        "today" => Some(WidgetKind::Today),
         _ => None,
     }))
 }
@@ -249,12 +315,15 @@ where
 }
 
 pub const WIDGET_GRID_COLS: usize = 6;
-pub const WIDGET_GRID_ROWS: usize = 3;
+pub const WIDGET_GRID_ROWS: usize = 4;
 pub const WIDGET_GRID_SLOTS: usize = WIDGET_GRID_COLS * WIDGET_GRID_ROWS;
-pub const AVAILABLE_WIDGETS: [WidgetKind; 3] = [
+pub const AVAILABLE_WIDGETS: [WidgetKind; 6] = [
     WidgetKind::Clock,
     WidgetKind::Calendar,
     WidgetKind::ResourceUsage,
+    WidgetKind::Network,
+    WidgetKind::Storage,
+    WidgetKind::Today,
 ];
 pub const AVAILABLE_COMPACT_WIDGETS: [CompactWidgetKind; 2] =
     [CompactWidgetKind::Time, CompactWidgetKind::ResourceUsage];

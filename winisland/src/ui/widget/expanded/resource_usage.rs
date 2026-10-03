@@ -172,7 +172,7 @@ fn draw_ring(
     let fonts = FontManager::global();
     let inset = 5.0 * scale;
     let label_gap = 3.0 * scale;
-    let mut label_size = (bounds.height() * 0.16).clamp(4.0 * scale, 9.0 * scale);
+    let mut label_size = (bounds.height() * 0.16).clamp(4.0 * scale, 11.0 * scale);
     let label_space = (bounds.width() - inset * 2.0).max(1.0);
     let measured_label = fonts.measure_text_cached(
         config.kind.label(),
@@ -210,7 +210,7 @@ fn draw_ring(
             StrokeCap::Round,
         );
     }
-    let mut value_size = (diameter * 0.22).clamp(4.0 * scale, 9.0 * scale);
+    let mut value_size = (diameter * 0.22).clamp(4.0 * scale, 16.0 * scale);
     let max_value_width = diameter * 0.78;
     let mut value_width =
         fonts.measure_text_cached(usage.text, value_size, winisland_render::FontStyle::bold());

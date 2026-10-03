@@ -169,6 +169,7 @@ pub struct AgentSnapshot {
     pub label: String,
     pub tasks: Vec<AgentTask>,
     pub total_count: usize,
+    pub pending_count: Option<usize>,
     pub completed_today: usize,
     pub next_reminder: String,
     pub reminder_id: String,
@@ -227,6 +228,7 @@ impl AgentSnapshot {
             && self.state == other.state
             && self.label == other.label
             && self.total_count == other.total_count
+            && self.pending_count == other.pending_count
             && self.completed_today == other.completed_today
             && self.next_reminder == other.next_reminder
             && self.reminder_id == other.reminder_id
@@ -413,6 +415,7 @@ fn read_snapshot(path: &PathBuf) -> Result<AgentSnapshot, String> {
         .as_deref()
         .map(|id| clean_text(id, 128));
     snapshot.total_count = snapshot.total_count.min(100_000);
+    snapshot.pending_count = snapshot.pending_count.map(|count| count.min(100_000));
     snapshot.completed_today = snapshot.completed_today.min(100_000);
     snapshot.tasks.truncate(256);
     for task in &mut snapshot.tasks {

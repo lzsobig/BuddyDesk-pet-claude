@@ -55,6 +55,7 @@ pub fn draw_widget_page(
     let mut animating = false;
 
     if alpha > 20 {
+        crate::ui::widget::resource_usage::set_layout_metrics(widget_layout);
         let layout = widget_grid_layout(ox, oy, w, h, scale);
         let logical_layout = widget_grid_layout(0.0, 0.0, expanded_width, expanded_height, 1.0);
 

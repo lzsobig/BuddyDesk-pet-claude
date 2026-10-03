@@ -252,7 +252,7 @@ class WinIslandBridge(QObject):
                 return
             action = command.get("action")
             agent_actions = ("open_tasks", "task_complete", "task_reopen", "task_detail", "reminder_snooze", "reminder_complete", "reminder_dismiss")
-            if action not in ("open_chat", "open_settings", "pet_state", *agent_actions):
+            if action not in ("open_chat", "open_settings", "open_pet_settings", "pet_state", *agent_actions):
                 return
             if action == "pet_state" and (
                 not isinstance(command.get("state"), str)
@@ -273,6 +273,8 @@ class WinIslandBridge(QObject):
                     self.main_app._show_chat()
                 elif action == "open_settings":
                     self.main_app._open_settings()
+                elif action == "open_pet_settings":
+                    self.main_app._open_settings(3)
                 elif self.main_app.pet:
                     self.main_app.pet.set_state(command["state"])
             finally:

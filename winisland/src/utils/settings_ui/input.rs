@@ -309,6 +309,15 @@ pub fn widget_delete_button_hit(mouse: (f32, f32), rect: (f32, f32, f32, f32), s
     (mx - cx).powi(2) + (my - cy).powi(2) <= radius.powi(2)
 }
 
+pub fn widget_resize_handle_hit(mouse: (f32, f32), rect: (f32, f32, f32, f32), scale: f32) -> bool {
+    let (x, y, w, h) = rect;
+    let corner = (12.0 * scale).max(9.0);
+    mouse.0 >= x + w - corner
+        && mouse.0 <= x + w + 3.0 * scale
+        && mouse.1 >= y + h - corner
+        && mouse.1 <= y + h + 3.0 * scale
+}
+
 fn widget_library_panel_width(width: f32) -> f32 {
     width - CONTENT_PADDING * 2.0 - GROUP_INNER_PAD * 2.0
 }

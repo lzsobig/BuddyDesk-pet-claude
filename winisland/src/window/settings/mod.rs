@@ -21,6 +21,7 @@ use winisland_plugin_host::host::PluginHost;
 use winisland_plugin_package::marketplace::{MarketplaceCatalog, MarketplacePlugin};
 use winisland_render::{Renderer, RendererTargetId};
 
+pub mod bridge;
 pub mod input;
 pub mod items;
 pub mod pages;
@@ -37,12 +38,15 @@ pub(crate) const SIDEBAR_W: f32 = 184.0;
 pub(crate) const SIDEBAR_ROW_H: f32 = 34.0;
 pub(crate) const SIDEBAR_ROW_GAP: f32 = 2.0;
 pub(crate) const SIDEBAR_START_Y: f32 = 64.0;
-pub(crate) const BUILTIN_SIDEBAR_PAGE_COUNT: usize = 6;
+pub(crate) const BUILTIN_SIDEBAR_PAGE_COUNT: usize = 9;
 pub(crate) const GENERAL_PAGE_INDEX: usize = 0;
 pub(crate) const WIDGETS_PAGE_INDEX: usize = 2;
 pub(crate) const PLUGINS_PAGE_INDEX: usize = 3;
-pub(crate) const PET_PAGE_INDEX: usize = 4;
-pub(crate) const PLUGIN_SETTINGS_START_INDEX: usize = 5;
+pub(crate) const CONNECTION_PAGE_INDEX: usize = 4;
+pub(crate) const VOICE_PAGE_INDEX: usize = 5;
+pub(crate) const PREFERENCES_PAGE_INDEX: usize = 6;
+pub(crate) const PET_PAGE_INDEX: usize = 7;
+pub(crate) const PLUGIN_SETTINGS_START_INDEX: usize = 8;
 pub(crate) const PAGE_NAV_X: f32 = SIDEBAR_W + 18.0;
 pub(crate) const PAGE_NAV_Y: f32 = 18.0;
 pub(crate) const PAGE_NAV_WIDTH: f32 = 34.0;
@@ -183,6 +187,7 @@ pub(crate) enum MarketplaceViewState {
 }
 
 pub struct SettingsApp {
+    pub(crate) settings_surface: bridge::SurfacePublisher,
     pub(crate) window: Option<WindowRef>,
     pub(crate) renderer_target: Option<RendererTargetId>,
     pub(crate) config: AppConfig,
@@ -233,6 +238,7 @@ pub struct SettingsApp {
     pub(crate) scroll_dragging: bool,
     scroll_drag_offset: f32,
     pub(crate) widget_dragging: Option<WidgetSource>,
+    pub(crate) widget_resizing: Option<pages::widgets::WidgetResize>,
     pub(crate) widget_drag_hover_slot: Option<WidgetEditorSlot>,
     pub(crate) widget_preview_hover_slot: Option<WidgetEditorSlot>,
     pub(crate) widget_editor_mode: WidgetEditorMode,
@@ -323,6 +329,9 @@ impl SettingsApp {
             1 => winisland_core::i18n::tr("tab_music"),
             2 => winisland_core::i18n::tr("tab_widgets"),
             3 => winisland_core::i18n::tr("tab_plugins"),
+            CONNECTION_PAGE_INDEX => winisland_core::i18n::tr("tab_buddy_connection"),
+            VOICE_PAGE_INDEX => winisland_core::i18n::tr("tab_buddy_voice"),
+            PREFERENCES_PAGE_INDEX => winisland_core::i18n::tr("tab_buddy_preferences"),
             PET_PAGE_INDEX => winisland_core::i18n::tr("tab_pet"),
             page if page == self.about_page_index() => winisland_core::i18n::tr("tab_about"),
             _ => self
@@ -350,6 +359,7 @@ impl SettingsApp {
         let (pet_snapshot, pet_last_modified) = pages::pet::PetSnapshot::read();
         let detected_apps = config.smtc_known_apps.clone();
         Self {
+            settings_surface: bridge::SurfacePublisher::default(),
             window: None,
             renderer_target: None,
             config,
@@ -400,6 +410,7 @@ impl SettingsApp {
             scroll_dragging: false,
             scroll_drag_offset: 0.0,
             widget_dragging: None,
+            widget_resizing: None,
             widget_drag_hover_slot: None,
             widget_preview_hover_slot: None,
             widget_editor_mode: WidgetEditorMode::Expanded,
@@ -691,6 +702,7 @@ impl SettingsApp {
     fn handle_focus_changed(&mut self, focused: bool) {
         self.focused = focused;
         if !focused {
+            self.cancel_widget_resize();
             self.commit_number_input();
             self.dots_hovered = false;
             self.scroll_dragging = false;
@@ -802,6 +814,10 @@ impl SettingsApp {
     }
 
     fn handle_pressed_key(&mut self, key: &Key) {
+        if self.widget_resizing.is_some() && matches!(key, Key::Escape) {
+            self.cancel_widget_resize();
+            return;
+        }
         if self.resource_editor_open {
             if matches!(key, Key::Escape) {
                 if self.popup.take().is_some() {
@@ -947,6 +963,7 @@ impl SettingsApp {
                 self.touch_id = None;
             }
             TouchPhase::Cancelled if self.touch_id == Some(touch_id) => {
+                self.cancel_widget_resize();
                 self.music_notice_pressed = false;
                 self.scroll_dragging = false;
                 self.widget_dragging = None;
@@ -969,6 +986,9 @@ impl SettingsApp {
     }
 
     fn update_widget_hover(&mut self) -> bool {
+        if self.widget_resizing.is_some() {
+            return self.update_widget_resize();
+        }
         if self.resource_editor_open {
             return self.set_widget_hover_target(None);
         }
@@ -1192,6 +1212,10 @@ impl SettingsApp {
     }
 
     pub(crate) fn update(&mut self) -> Option<Instant> {
+        let buddy_page = self.buddy_page();
+        let surface_window = self.window.filter(|_| self.renderer_target.is_some());
+        self.settings_surface
+            .publish(surface_window, buddy_page, self.is_light, Instant::now());
         let window = self.window.as_ref()?;
         if window.is_minimized() == Some(true) {
             return None;
@@ -1223,7 +1247,17 @@ impl SettingsApp {
             is_widget_dragging,
             is_number_input_active,
         ) {
-            return (self.active_page == PET_PAGE_INDEX).then_some(self.pet_next_refresh);
+            return if buddy_page.is_some() {
+                Some(if self.active_page == PET_PAGE_INDEX {
+                    self.settings_surface
+                        .next_publish
+                        .min(self.pet_next_refresh)
+                } else {
+                    self.settings_surface.next_publish
+                })
+            } else {
+                None
+            };
         }
 
         let now = Instant::now();
@@ -1341,6 +1375,10 @@ impl SettingsApp {
     }
 
     pub(crate) fn close(&mut self) -> Option<RendererTargetId> {
+        self.cancel_widget_resize();
+        self.settings_surface.next_publish = Instant::now();
+        self.settings_surface
+            .publish(None, None, self.is_light, Instant::now());
         self.commit_number_input();
         self.popup = None;
         self.widget_dragging = None;

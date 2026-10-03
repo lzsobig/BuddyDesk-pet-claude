@@ -443,6 +443,7 @@ fn draw_library_tile(
                 WidgetKind::Calendar => (60.0, 60.0),
                 WidgetKind::ResourceUsage => (98.0, 46.0),
                 WidgetKind::Settings => (54.0, 54.0),
+                WidgetKind::Network | WidgetKind::Storage | WidgetKind::Today => (98.0, 46.0),
             };
             draw_mini_card(
                 painter,
@@ -661,6 +662,7 @@ fn draw_expanded_widget_preview(params: WidgetPreviewParams<'_>) {
     };
     draw_grid(painter, &geometry, dragging, &drop_cells, theme);
 
+    crate::ui::widget::resource_usage::set_layout_metrics(widget_layout);
     for entry in widget_layout {
         let Some(kind) = entry.widget else { continue };
         if widget_dragging == Some(&WidgetSource::BuiltIn(kind)) {
@@ -703,14 +705,34 @@ fn draw_expanded_widget_preview(params: WidgetPreviewParams<'_>) {
         painter.restore();
 
         let hovered = widget_preview_hover_slot.is_some_and(|slot| footprint.contains(&slot));
-        if kind != WidgetKind::Settings && (dragging || hovered) {
-            let (button_x, button_y) =
-                widget_delete_button_center(x, y, width, height, geometry.cap_scale);
-            draw_delete_button(painter, button_x, button_y, geometry.cap_scale);
-            if kind == WidgetKind::ResourceUsage && hovered && !dragging {
-                let (edit_x, edit_y) =
-                    widget_edit_button_center(x, y, width, height, geometry.cap_scale);
-                draw_edit_button(painter, edit_x, edit_y, geometry.cap_scale, false);
+        if kind != WidgetKind::Settings {
+            if !dragging {
+                for offset in [4.0, 8.0] {
+                    let inset = offset * geometry.cap_scale;
+                    painter.stroke_line(
+                        Point::new(
+                            x + width - inset - 4.0 * geometry.cap_scale,
+                            y + height - inset,
+                        ),
+                        Point::new(
+                            x + width - inset,
+                            y + height - inset - 4.0 * geometry.cap_scale,
+                        ),
+                        geometry.cap_scale,
+                        Rgba::from_argb(170, 255, 255, 255),
+                        StrokeCap::Round,
+                    );
+                }
+            }
+            if dragging || hovered {
+                let (button_x, button_y) =
+                    widget_delete_button_center(x, y, width, height, geometry.cap_scale);
+                draw_delete_button(painter, button_x, button_y, geometry.cap_scale);
+                if kind == WidgetKind::ResourceUsage && hovered && !dragging {
+                    let (edit_x, edit_y) =
+                        widget_edit_button_center(x, y, width, height, geometry.cap_scale);
+                    draw_edit_button(painter, edit_x, edit_y, geometry.cap_scale, false);
+                }
             }
         }
     }

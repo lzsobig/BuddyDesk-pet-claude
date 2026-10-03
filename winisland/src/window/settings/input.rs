@@ -87,6 +87,9 @@ impl SettingsApp {
                 }
             }
             3 => self.handle_plugin_click(),
+            super::CONNECTION_PAGE_INDEX
+            | super::VOICE_PAGE_INDEX
+            | super::PREFERENCES_PAGE_INDEX => {}
             PET_PAGE_INDEX => self.handle_pet_click(input),
             page if page == self.about_page_index() => self.handle_about_click(input),
             _ => self.handle_plugin_settings_click(input),
@@ -94,6 +97,7 @@ impl SettingsApp {
     }
 
     fn reset_scroll(&mut self) {
+        self.cancel_widget_resize();
         self.scroll_y = 0.0;
         self.target_scroll_y = 0.0;
         self.widget_hover_target = None;
@@ -245,10 +249,11 @@ impl SettingsApp {
         true
     }
 
-    fn visit_page(&mut self, page: usize) {
+    pub(super) fn visit_page(&mut self, page: usize) {
         if self.active_page == page {
             return;
         }
+        self.cancel_widget_resize();
         self.page_history.truncate(self.page_history_index + 1);
         self.page_history.push(page);
         self.page_history_index = self.page_history.len() - 1;

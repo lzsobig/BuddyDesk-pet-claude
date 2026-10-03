@@ -22,6 +22,13 @@ const MODE_CONTROL_H: f32 = 30.0;
 const MODE_CONTROL_RIGHT: f32 = 18.0;
 const MODE_CONTROL_Y: f32 = 17.0;
 
+pub(crate) struct WidgetResize {
+    kind: WidgetKind,
+    anchor: usize,
+    original: (usize, usize),
+    current: (usize, usize),
+}
+
 struct WidgetPreviewContext {
     item_y: f32,
     width: f32,
@@ -102,6 +109,7 @@ impl SettingsApp {
             return false;
         };
         if mode != self.widget_editor_mode {
+            self.cancel_widget_resize();
             self.widget_editor_mode = mode;
             self.widget_dragging = None;
             self.compact_widget_dragging = None;
@@ -251,6 +259,9 @@ impl SettingsApp {
     }
 
     pub(crate) fn widget_drag_active(&self) -> bool {
+        if self.widget_resizing.is_some() {
+            return true;
+        }
         match self.widget_editor_mode {
             WidgetEditorMode::Expanded => self.widget_dragging.is_some(),
             WidgetEditorMode::Compact => self.compact_widget_dragging.is_some(),
@@ -276,6 +287,9 @@ impl SettingsApp {
     pub(crate) fn handle_widget_drag_press(&mut self) -> bool {
         if self.widget_editor_mode == WidgetEditorMode::Compact {
             return self.handle_compact_widget_drag_press();
+        }
+        if self.begin_widget_resize() {
+            return true;
         }
         let Some(hit) = self.expanded_widget_preview_hit_at_mouse() else {
             return false;
@@ -401,6 +415,27 @@ impl SettingsApp {
     }
 
     pub(crate) fn handle_widget_drag_release(&mut self) -> bool {
+        if let Some(resize) = self.widget_resizing.take() {
+            if resize.current != resize.original {
+                if resize.kind == WidgetKind::ResourceUsage {
+                    self.config.resource_widget_columns = resize.current.0;
+                    self.config.resource_widget_rows = resize.current.1;
+                } else {
+                    self.config
+                        .widget_sizes
+                        .retain(|size| size.widget != resize.kind);
+                    self.config
+                        .widget_sizes
+                        .push(winisland_core::config::WidgetSize {
+                            widget: resize.kind,
+                            columns: resize.current.0,
+                            rows: resize.current.1,
+                        });
+                }
+                self.persist_settings_change();
+            }
+            return true;
+        }
         if self.widget_editor_mode == WidgetEditorMode::Compact {
             return self.handle_compact_widget_drag_release();
         }
@@ -445,6 +480,105 @@ impl SettingsApp {
             });
         }
         true
+    }
+
+    fn begin_widget_resize(&mut self) -> bool {
+        let Some(context) = self.widget_preview_context() else {
+            return false;
+        };
+        let geometry = widget_grid_geom(
+            context.item_y,
+            context.width,
+            self.config.expanded_width,
+            self.config.expanded_height,
+        );
+        let target = self.config.widget_layout.iter().find_map(|entry| {
+            let kind = entry.widget?;
+            (kind != WidgetKind::Settings
+                && crate::utils::settings_ui::widget_resize_handle_hit(
+                    context.pointer,
+                    geometry.footprint_rect(kind.span(), entry.slot),
+                    geometry.cap_scale,
+                ))
+            .then_some((kind, entry.slot))
+        });
+        let Some((kind, anchor)) = target else {
+            return false;
+        };
+        self.widget_resizing = Some(WidgetResize {
+            kind,
+            anchor,
+            original: kind.span(),
+            current: kind.span(),
+        });
+        true
+    }
+
+    pub(crate) fn update_widget_resize(&mut self) -> bool {
+        let Some(context) = self.widget_preview_context() else {
+            return false;
+        };
+        let Some(resize) = self.widget_resizing.as_ref() else {
+            return false;
+        };
+        let geometry = widget_grid_geom(
+            context.item_y,
+            context.width,
+            self.config.expanded_width,
+            self.config.expanded_height,
+        );
+        let (x, y, cw, ch) = geometry.footprint_rect((1, 1), resize.anchor);
+        let (_, _, two_w, two_h) = geometry.footprint_rect((2, 2), resize.anchor);
+        let gap_x = two_w - cw * 2.0;
+        let gap_y = two_h - ch * 2.0;
+        let cols = ((context.pointer.0 - x + gap_x) / (cw + gap_x))
+            .round()
+            .max(1.0) as usize;
+        let rows = ((context.pointer.1 - y + gap_y) / (ch + gap_y))
+            .round()
+            .max(1.0) as usize;
+        let mut desired = (
+            cols.min(
+                winisland_core::config::WIDGET_GRID_COLS
+                    - resize.anchor % winisland_core::config::WIDGET_GRID_COLS,
+            ),
+            rows.min(
+                winisland_core::config::WIDGET_GRID_ROWS
+                    - resize.anchor / winisland_core::config::WIDGET_GRID_COLS,
+            ),
+        );
+        if resize.kind == WidgetKind::ResourceUsage {
+            desired.0 = desired.0.min(3);
+            desired.1 = desired.1.min(6 / desired.0);
+        }
+        if desired == resize.current
+            || !winisland_core::config::widget_resize_fits(
+                &self.config.widget_layout,
+                &self.config.plugin_widget_layout,
+                &self.plugin_widgets,
+                resize.kind,
+                resize.anchor,
+                desired,
+            )
+        {
+            return false;
+        }
+        winisland_core::config::set_widget_span(resize.kind, desired.0, desired.1);
+        self.widget_resizing.as_mut().unwrap().current = desired;
+        self.mark_items_dirty();
+        true
+    }
+
+    pub(crate) fn cancel_widget_resize(&mut self) {
+        if let Some(resize) = self.widget_resizing.take() {
+            winisland_core::config::set_widget_span(
+                resize.kind,
+                resize.original.0,
+                resize.original.1,
+            );
+            self.mark_items_dirty();
+            self.request_redraw();
+        }
     }
 
     fn handle_compact_widget_drag_release(&mut self) -> bool {

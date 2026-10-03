@@ -10,6 +10,14 @@ use winisland_render::text::FontManager;
 use super::{App, DEFAULT_ANIMATION_REFRESH_RATE_MILLIHERTZ, IslandLayout};
 
 impl App {
+    pub(super) fn expanded_content_height(&self) -> f32 {
+        if self.current_page == crate::ui::expanded::pager::ExpandedPage::Companion {
+            self.config.expanded_height.min(200.0)
+        } else {
+            self.config.expanded_height
+        }
+    }
+
     pub(super) fn required_window_size(&self) -> WindowSize {
         let compact_scale = self.config.compact_scale;
         let expanded_scale = self.config.expanded_scale;
@@ -150,7 +158,7 @@ impl App {
         let expanded_scale = self.config.expanded_scale as f64;
         let base_half_h = self.config.base_height as f64 * compact_scale / 2.0;
         let expanded_half_w = self.config.expanded_width as f64 * expanded_scale / 2.0;
-        let expanded_h = (self.config.expanded_height
+        let expanded_h = (self.expanded_content_height()
             + crate::ui::expanded::today_section::height(
                 self.agent.snapshot(),
                 self.agent.connected(),

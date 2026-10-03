@@ -58,7 +58,7 @@ class SettingsCombo(QComboBox):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QColor(TEXT_MUTED))
+        painter.setPen(QColor("#9da9b8" if getattr(self, "_native_dark", False) else TEXT_MUTED))
         x, y = self.width() - 17, self.height() // 2
         painter.drawLine(x - 3, y - 1, x, y + 2)
         painter.drawLine(x, y + 2, x + 3, y - 1)
@@ -80,12 +80,13 @@ class SettingSwitch(QCheckBox):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(self.font())
         painter.setOpacity(1.0 if self.isEnabled() else 0.45)
-        painter.setPen(QColor(TEXT_SECONDARY))
+        painter.setPen(QColor("#c2cbd6" if getattr(self, "_native_dark", False) else TEXT_SECONDARY))
         painter.drawText(self.rect().adjusted(0, 0, -48, 0),
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.text())
         track = QRectF(self.width() - 34, (self.height() - 18) / 2, 34, 18)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(ACCENT if self.isChecked() else BORDER))
+        painter.setBrush(QColor(ACCENT if self.isChecked() else
+                                ("#45505f" if getattr(self, "_native_dark", False) else BORDER)))
         painter.drawRoundedRect(track, 9, 9)
         painter.setBrush(QColor(TEXT_ON_ACCENT if self.isChecked() else TEXT_SECONDARY))
         painter.drawEllipse(QRectF(track.left() + (18 if self.isChecked() else 2), track.top() + 2, 14, 14))
@@ -101,28 +102,57 @@ class SettingsPanel(QDialog):
 
     saved = Signal(dict)  # emits new config dict after save
 
-    def __init__(self, current_config: dict, parent=None):
+    def __init__(self, current_config: dict, parent=None, dock_mode=False):
         super().__init__(parent)
         self._config = dict(current_config)
+        self._dock_mode = dock_mode
         self._sound_rows: dict[str, dict] = {}  # event → {enabled_cb, path_label, choose_btn}
         self._sound_paths: dict[str, str] = {}  # event → absolute path
-        self.setWindowTitle("设置")
-        self.setModal(True)
-        self.resize(420, min(490, self.screen().availableGeometry().height() - 60))
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowTitle("BuddyDesk Settings")
+        self.setModal(not dock_mode)
+        if dock_mode:
+            self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        else:
+            self.resize(420, min(490, self.screen().availableGeometry().height() - 60))
+            self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
+                                | Qt.WindowType.WindowStaysOnTopHint)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._drag_pos = None
         self._build_ui()
         self._populate()
 
+    def set_native_light(self, is_light):
+        if not self._dock_mode:
+            return
+        if not hasattr(self, "_native_styles"):
+            self._native_styles = [(widget, widget.styleSheet()) for widget in self.findChildren(QWidget)]
+        colors = {
+            BG_DEEP: "#1b2029", BG_CARD: "#2b313c", BG_SUBTLE: "#242b35",
+            TEXT_PRIMARY: "#f1f3f5", TEXT_SECONDARY: "#c2cbd6",
+            TEXT_MUTED: "#9da9b8", TEXT_META: "#909ead",
+            BORDER: "#45505f", BORDER_SUBTLE: "#384250",
+        }
+        for widget, original in self._native_styles:
+            style = original
+            if not is_light:
+                for source, target in colors.items():
+                    style = style.replace(source, target)
+            widget.setStyleSheet(style)
+            if isinstance(widget, (SettingSwitch, SettingsCombo)):
+                widget._native_dark = not is_light
+                widget.update()
+        self._native_background = BG_DEEP if is_light else "#1b2029"
+        self.setStyleSheet("" if is_light else
+                           "QWidget { background-color:#1b2029;color:#f1f3f5; } "
+                           "QFrame#settingsCard,QWidget#settingsBody,QScrollArea { background:transparent; }")
+        self.update()
+
     # ── UI construction ─────────────────────────────────────────────
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        margin = 0 if self._dock_mode else 12
+        root.setContentsMargins(margin, margin, margin, margin)
         card = QFrame()
         card.setObjectName("settingsCard")
         card.setStyleSheet(f"""
@@ -149,7 +179,8 @@ class SettingsPanel(QDialog):
                             f"QPushButton:hover {{ color:{TEXT_PRIMARY}; }}")
         close.clicked.connect(self.reject)
         header_layout.addWidget(close)
-        card_layout.addWidget(header)
+        if not self._dock_mode:
+            card_layout.addWidget(header)
         self._settings_scroll = QScrollArea()
         self._settings_scroll.setWidgetResizable(True)
         self._settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -174,8 +205,9 @@ class SettingsPanel(QDialog):
             self._settings_tabs.append(button)
             tabs.addWidget(button)
         tabs.addStretch()
-        form.addLayout(tabs)
-        form.addSpacing(12)
+        if not self._dock_mode:
+            form.addLayout(tabs)
+            form.addSpacing(12)
         sections = form
         self._connection_page = QFrame()
         form = QVBoxLayout(self._connection_page)
@@ -267,12 +299,12 @@ class SettingsPanel(QDialog):
         footer_layout.setContentsMargins(24, 14, 24, 20)
         footer_layout.setSpacing(8)
         footer_layout.addStretch()
-        cancel = QPushButton("取消")
+        cancel = QPushButton("还原" if self._dock_mode else "取消")
         cancel.setFixedSize(72, 34)
         cancel.setStyleSheet(f"QPushButton {{ background:transparent;border:1px solid {BORDER};"
                             f"border-radius:8px;padding:0;color:{TEXT_SECONDARY};font-size:12px; }}"
                             f"QPushButton:hover {{ background:{BG_SUBTLE}; }}")
-        cancel.clicked.connect(self.reject)
+        cancel.clicked.connect(self.restore_saved if self._dock_mode else self.reject)
         save = QPushButton("保存")
         save.setFixedSize(88, 34)
         save.setDefault(True)
@@ -294,8 +326,9 @@ class SettingsPanel(QDialog):
         self._pet_page.setVisible(index == 3)
         for position, button in enumerate(self._settings_tabs):
             button.setChecked(position == index)
-        self.resize(440 if index == 3 else 420,
-                    min(640 if index == 3 else 490, self.screen().availableGeometry().height() - 60))
+        if not self._dock_mode:
+            self.resize(440 if index == 3 else 420,
+                        min(640 if index == 3 else 490, self.screen().availableGeometry().height() - 60))
 
     def _section_header(self, text: str) -> QLabel:
         lbl = QLabel(text)
@@ -631,8 +664,28 @@ class SettingsPanel(QDialog):
         self._apikey_frame.setVisible(is_openai)
         self._baseurl_frame.setVisible(is_openai)
         self._model_frame.setVisible(is_openai)
-        preferred_height = 490
-        self.resize(self.width(), min(preferred_height, self.screen().availableGeometry().height() - 60))
+        if not self._dock_mode:
+            preferred_height = 490
+            self.resize(self.width(), min(preferred_height, self.screen().availableGeometry().height() - 60))
+
+    def restore_saved(self):
+        self._config = cfg.load_user_config()
+        self._populate()
+        self._access_mode.setCurrentIndex(max(0, self._access_mode.findData(
+            self._config.get("agent_access_mode", "confirm"))))
+        voice = self._voice_page
+        voice._saved_voice_mode = self._config.get("voice_mode") if self._config.get("voice_mode") in ("local", "cloud") else "local"
+        voice._direct_mode = voice._saved_voice_mode
+        selected = "doubao" if self._config.get("agent_voice_provider") == "doubao" else voice._direct_mode
+        voice.mode.setCurrentIndex(max(0, voice.mode.findData(selected)))
+        voice.directory.setText(str(self._config.get("voice_model_dir", "")))
+        voice.base.setText(str(self._config.get("voice_api_base", "https://api.openai.com/v1")))
+        voice.key.setText(str(self._config.get("voice_api_key", "")))
+        voice.model.setText(str(self._config.get("voice_api_model", "whisper-1")))
+        pet = self._pet_page
+        for field in ("pet_id", "pet_name", "pet_enabled", "pet_island_enabled",
+                      "pet_roam", "pet_position"):
+            pet.apply_external_setting(field, self._config)
 
     def _on_preset_changed(self, name: str):
         p = API_PRESETS.get(name, {})
@@ -683,7 +736,8 @@ class SettingsPanel(QDialog):
 
         cfg.save_user_config(self._config)
         self.saved.emit(self._config)
-        self.accept()
+        if not self._dock_mode:
+            self.accept()
 
     def done(self, result):
         if not self._voice_page.ready_to_close(lambda: self.done(result)):
@@ -718,15 +772,20 @@ class SettingsPanel(QDialog):
 
     # ── Frameless window drag ───────────────────────────────────────
     def paintEvent(self, event):
+        if self._dock_mode:
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor(getattr(self, "_native_background", BG_DEEP)))
+            painter.end()
+            return
         from ui.window_surface import paint_window_surface
         paint_window_surface(self)
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
+        if not self._dock_mode and e.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
-        if self._drag_pos and e.buttons() & Qt.MouseButton.LeftButton:
+        if not self._dock_mode and self._drag_pos and e.buttons() & Qt.MouseButton.LeftButton:
             self.move(e.globalPosition().toPoint() - self._drag_pos)
 
     def mouseReleaseEvent(self, _e):

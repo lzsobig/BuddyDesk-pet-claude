@@ -42,6 +42,17 @@ impl App {
             None => return,
         };
         let now = Instant::now();
+        let previous_settings_request = self.last_buddy_settings_request.clone();
+        if let Some(page) = crate::window::settings::bridge::read_settings_request(
+            &mut self.last_buddy_settings_request,
+        ) {
+            self.open_settings();
+            if let Some(settings) = self.settings.as_mut() {
+                settings.select_buddy_page(&page);
+            } else {
+                self.last_buddy_settings_request = previous_settings_request;
+            }
+        }
         if let Some(error) = self
             .renderer
             .as_mut()
@@ -909,7 +920,7 @@ impl App {
         };
         let compact_content_h = self.compact_content_height();
         let default_target_h = if self.expanded {
-            (self.config.expanded_height
+            (self.expanded_content_height()
                 + crate::ui::expanded::today_section::height(
                     self.agent.snapshot(),
                     self.agent.connected(),

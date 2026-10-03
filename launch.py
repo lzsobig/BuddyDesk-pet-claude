@@ -28,6 +28,9 @@ def _bootstrap_qt():
 
 _bootstrap_qt()
 
+from ui.windows_identity import set_app_identity
+set_app_identity()
+
 if getattr(sys, 'frozen', False):
     os.chdir(os.path.dirname(sys.executable))
     if os.path.isfile(os.path.join(os.path.dirname(sys.executable), "_internal", "bin", "WinIsland.exe")) and "--winisland" not in sys.argv:

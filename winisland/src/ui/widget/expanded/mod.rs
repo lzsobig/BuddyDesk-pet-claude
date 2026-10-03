@@ -1,6 +1,7 @@
 pub mod calendar;
 pub mod resource_usage;
 pub mod settings;
+pub mod summary;
 pub mod time;
 
 use crate::utils::shape::expanded_island_radius;
@@ -141,7 +142,12 @@ pub(crate) fn draw_widget_text_centered(
 pub fn widget_animates(kind: WidgetKind) -> bool {
     matches!(
         kind,
-        WidgetKind::Clock | WidgetKind::Calendar | WidgetKind::ResourceUsage
+        WidgetKind::Clock
+            | WidgetKind::Calendar
+            | WidgetKind::ResourceUsage
+            | WidgetKind::Network
+            | WidgetKind::Storage
+            | WidgetKind::Today
     )
 }
 
@@ -168,6 +174,15 @@ pub fn draw_widget(
         WidgetKind::Settings => {
             settings::draw_settings_widget(painter, x, y, w, h, scale, alpha, text_color)
         }
+        WidgetKind::Network | WidgetKind::Storage | WidgetKind::Today => summary::draw_summary(
+            painter,
+            kind,
+            Rect::from_xywh(x, y, w, h),
+            scale,
+            alpha,
+            text_color,
+            false,
+        ),
     }
 }
 
@@ -183,7 +198,20 @@ pub fn draw_widget_preview(
     alpha: u8,
     text_color: Rgba,
 ) {
-    if kind == WidgetKind::ResourceUsage {
+    if matches!(
+        kind,
+        WidgetKind::Network | WidgetKind::Storage | WidgetKind::Today
+    ) {
+        summary::draw_summary(
+            painter,
+            kind,
+            Rect::from_xywh(x, y, w, h),
+            scale,
+            alpha,
+            text_color,
+            true,
+        );
+    } else if kind == WidgetKind::ResourceUsage {
         resource_usage::draw_resource_usage_preview(painter, x, y, w, h, scale, alpha, text_color);
     } else {
         draw_widget(painter, kind, x, y, w, h, scale, alpha, text_color);
@@ -191,5 +219,10 @@ pub fn draw_widget_preview(
 }
 
 pub fn draw_mini_card(painter: Painter<'_>, kind: WidgetKind, x: f32, y: f32, w: f32, h: f32) {
+    painter.fill_round_rect(
+        Rect::from_xywh(x, y, w, h),
+        winisland_render::Radius::uniform(10.0),
+        Rgba::from_rgb(18, 18, 20),
+    );
     draw_widget_preview(painter, kind, x, y, w, h, 1.0, 255, Rgba::WHITE);
 }

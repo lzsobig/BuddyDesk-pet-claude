@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 use winisland_platform::{MetricSelection, SystemSample};
@@ -105,6 +105,11 @@ impl ResourceUsageCache {
             metrics
                 .iter()
                 .any(|metric| metric.enabled && metric.kind == kind)
+                || ADDITIONAL_METRICS.with(|cell| match kind {
+                    ResourceMetricKind::Network => cell.get().0,
+                    ResourceMetricKind::Disk => cell.get().1,
+                    _ => false,
+                })
         };
         let selection = MetricSelection {
             cpu: enabled(ResourceMetricKind::Cpu),
@@ -218,9 +223,24 @@ impl<'a> ResourceUsage<'a> {
 }
 
 thread_local! {
+    static ADDITIONAL_METRICS: Cell<(bool, bool)> = const { Cell::new((false, false)) };
     static RESOURCE_USAGE: RefCell<ResourceUsageCache> = RefCell::new(ResourceUsageCache::default());
     static EXPANDED_RESOURCE_CONFIG: RefCell<Vec<ResourceMetricConfig>> = RefCell::new(default_resource_metrics());
     static COMPACT_RESOURCE_CONFIG: RefCell<Vec<ResourceMetricConfig>> = RefCell::new(default_resource_metrics());
+}
+
+pub(crate) fn set_layout_metrics(layout: &[winisland_core::config::WidgetSlot]) {
+    use winisland_core::config::WidgetKind;
+    ADDITIONAL_METRICS.with(|cell| {
+        cell.set((
+            layout
+                .iter()
+                .any(|entry| entry.widget == Some(WidgetKind::Network)),
+            layout
+                .iter()
+                .any(|entry| entry.widget == Some(WidgetKind::Storage)),
+        ))
+    });
 }
 
 fn replace_config(cell: &RefCell<Vec<ResourceMetricConfig>>, metrics: &[ResourceMetricConfig]) {

@@ -66,6 +66,79 @@ pub fn widget_footprint(widget: WidgetKind, anchor_slot: usize) -> Vec<usize> {
     span_cells(anchor_slot, widget.span())
 }
 
+pub fn normalize_widget_layout(layout: &mut Vec<WidgetSlot>) -> bool {
+    let original = layout.clone();
+    let mut normalized = default_widget_layout();
+    let settings = layout
+        .iter()
+        .find_map(|entry| {
+            (entry.widget == Some(WidgetKind::Settings) && entry.slot < WIDGET_GRID_SLOTS)
+                .then_some(entry.slot)
+        })
+        .unwrap_or(WIDGET_GRID_SLOTS - 1);
+    for entry in &mut normalized {
+        entry.widget = None;
+    }
+    normalized[settings].widget = Some(WidgetKind::Settings);
+    let mut occupied = [false; WIDGET_GRID_SLOTS];
+    occupied[settings] = true;
+    let mut seen = vec![WidgetKind::Settings];
+    for entry in layout.iter() {
+        let Some(kind) = entry.widget else {
+            continue;
+        };
+        if seen.contains(&kind) {
+            continue;
+        }
+        seen.push(kind);
+        let cells = span_cells(entry.slot.min(WIDGET_GRID_SLOTS - 1), kind.span());
+        let anchor = if cells.iter().all(|cell| !occupied[*cell]) {
+            cells.first().copied()
+        } else {
+            first_free_anchor(&occupied, kind.span())
+        };
+        if let Some(anchor) = anchor {
+            normalized[anchor].widget = Some(kind);
+            for cell in span_cells(anchor, kind.span()) {
+                occupied[cell] = true;
+            }
+        }
+    }
+    *layout = normalized;
+    *layout != original
+}
+
+pub fn widget_resize_fits(
+    layout: &[WidgetSlot],
+    plugin_layout: &[PluginWidgetSlot],
+    widgets: &[PluginWidget],
+    kind: WidgetKind,
+    anchor: usize,
+    span: (usize, usize),
+) -> bool {
+    let cells = span_cells(anchor, span);
+    !cells.is_empty()
+        && cells.first() == Some(&anchor)
+        && layout.iter().all(|entry| {
+            entry.widget.is_none_or(|other| {
+                other == kind
+                    || !widget_footprint(other, entry.slot)
+                        .iter()
+                        .any(|cell| cells.contains(cell))
+            })
+        })
+        && plugin_layout.iter().all(|entry| {
+            widgets
+                .iter()
+                .find(|widget| widget.layout_id().as_ref() == Some(&entry.id()))
+                .is_none_or(|widget| {
+                    !span_cells(entry.slot, widget.span())
+                        .iter()
+                        .any(|cell| cells.contains(cell))
+                })
+        })
+}
+
 pub fn widget_anchor_slot(widget: WidgetKind, target_slot: usize) -> usize {
     *widget_footprint(widget, target_slot)
         .first()
@@ -291,7 +364,7 @@ pub fn normalize_active_plugin_widget_layout(
         }
     }
     let mut normalized = Vec::with_capacity(plugin_layout.len());
-    for entry in plugin_layout.drain(..) {
+    for mut entry in plugin_layout.drain(..) {
         let Some(widget) = widgets.iter().find(|widget| {
             widget.plugin_id == entry.plugin_id
                 && widget.key.as_deref() == Some(entry.widget_key.as_str())
@@ -302,9 +375,16 @@ pub fn normalize_active_plugin_widget_layout(
         let duplicate = normalized.iter().any(|existing: &PluginWidgetSlot| {
             existing.plugin_id == entry.plugin_id && existing.widget_key == entry.widget_key
         });
-        let cells = span_cells(entry.slot, widget.span());
-        if duplicate || cells.is_empty() || cells.iter().any(|cell| occupied[*cell]) {
+        if duplicate {
             continue;
+        }
+        let mut cells = span_cells(entry.slot, widget.span());
+        if cells.is_empty() || cells.iter().any(|cell| occupied[*cell]) {
+            let Some(anchor) = first_free_anchor(&occupied, widget.span()) else {
+                continue;
+            };
+            entry.slot = anchor;
+            cells = span_cells(anchor, widget.span());
         }
         for cell in cells {
             occupied[cell] = true;

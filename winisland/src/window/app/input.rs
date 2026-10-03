@@ -62,7 +62,7 @@ impl App {
                     layout.offset_x as f32 + self.page_translation(ExpandedPage::Companion),
                     layout.island_y as f32,
                     self.springs.w.value,
-                    (self.config.expanded_height * self.config.expanded_scale)
+                    (self.expanded_content_height() * self.config.expanded_scale)
                         .min(self.springs.h.value),
                 ),
                 self.config.expanded_scale,
@@ -219,7 +219,7 @@ impl App {
                     self.springs.w.value,
                     self.springs.h.value,
                 ),
-                (self.config.expanded_height * self.config.expanded_scale)
+                (self.expanded_content_height() * self.config.expanded_scale)
                     .min(self.springs.h.value),
                 self.config.expanded_scale,
                 today_section::height(self.agent.snapshot(), self.agent.connected()),
@@ -250,7 +250,7 @@ impl App {
                 return;
             }
             let w = self.springs.w.value as f64;
-            let h = (self.config.expanded_height * self.config.expanded_scale)
+            let h = (self.expanded_content_height() * self.config.expanded_scale)
                 .min(self.springs.h.value) as f64;
             let scale = self.config.expanded_scale as f64;
 
