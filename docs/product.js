@@ -1,5 +1,148 @@
 "use strict";
 
+const brainExamples = {
+  claude: ["Claude Code", "已经配置好 Claude Code？在 AI 后端选择它，沿用本机 CLI 的登录与连接设置。", "Claude Code CLI", "前置准备", "安装并配置 Claude Code"],
+  openai: ["OpenAI", "选择 OpenAI 兼容 API，填写你的 API Key、服务地址和账号可用的模型名。密钥在桌面应用中配置。", "OpenAI 兼容 API", "平台", "OpenAI · 填写自己的 Key 和模型名"],
+  deepseek: ["DeepSeek", "在 AI 连接里选择 DeepSeek 平台，填写该平台的密钥与模型名。也可以使用你已有的兼容服务地址。", "OpenAI 兼容 API", "平台", "DeepSeek · 支持自定义服务地址"],
+  ollama: ["Ollama", "先在本机启动 Ollama，再把它的 OpenAI 兼容地址和本机已安装的模型名填入桌面设置。", "OpenAI 兼容 API", "服务地址示例", "http://localhost:11434/v1"],
+  custom: ["你的模型服务", "支持其他 OpenAI 兼容接口。按服务商提供的信息填写地址、密钥和模型名，语音识别另行配置。", "OpenAI 兼容 API", "需要填写", "API Key / Base URL / Model"],
+};
+const brainList = document.querySelector(".brain-list");
+const brainButtons = [...document.querySelectorAll("[data-brain]")];
+const brainPreview = document.querySelector(".brain-preview");
+let selectedBrain = brainButtons.find(button => button.getAttribute("aria-pressed") === "true");
+let previewedBrain;
+let brainTransition;
+function previewBrain(button) {
+  const row = button.getBoundingClientRect();
+  const list = brainList.getBoundingClientRect();
+  brainList.style.setProperty("--brain-y", `${row.top - list.top}px`);
+  brainList.style.setProperty("--brain-h", `${row.height}px`);
+  if (previewedBrain === button) return;
+  previewedBrain = button;
+  const values = brainExamples[button.dataset.brain];
+  ["brain-selected", "brain-description", "brain-backend", "brain-detail-label", "brain-detail"].forEach((id, index) => {
+    document.getElementById(id).textContent = values[index];
+  });
+  brainTransition?.cancel();
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    brainTransition = brainPreview.animate([
+      { opacity: .5, transform: "translateY(14px) scale(.98)", filter: "blur(3px)" },
+      { opacity: 1, transform: "translateY(0) scale(1)", filter: "blur(0)" }
+    ], { duration: 380, easing: "cubic-bezier(.2,.8,.2,1)" });
+  }
+}
+brainButtons.forEach((button) => {
+  button.addEventListener("pointerenter", () => previewBrain(button));
+  button.addEventListener("focus", () => previewBrain(button));
+  button.addEventListener("click", () => {
+    selectedBrain = button;
+    brainButtons.forEach(choice => choice.setAttribute("aria-pressed", String(choice === button)));
+    previewBrain(button);
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      button.animate([{ transform: "scale(.985)" }, { transform: "scale(1)" }],
+        { duration: 340, easing: "cubic-bezier(.16,1,.3,1)" });
+    }
+  });
+});
+brainList.addEventListener("pointerleave", () => previewBrain(
+  brainButtons.includes(document.activeElement) ? document.activeElement : selectedBrain));
+brainList.addEventListener("focusout", (event) => {
+  if (!brainList.contains(event.relatedTarget)) previewBrain(selectedBrain);
+});
+window.addEventListener("resize", () => previewBrain(previewedBrain || selectedBrain));
+requestAnimationFrame(() => previewBrain(selectedBrain));
+document.fonts.ready.then(() => previewBrain(previewedBrain || selectedBrain));
+new ResizeObserver(() => previewBrain(previewedBrain || selectedBrain)).observe(brainList);
+
+const conversationExamples = {
+  plan: ["这周的事情有点多，陪我理一下。", "好，先从最挂心的那件说起。是什么时候要交，还是只是一直惦记着？我们一件件理。"],
+  file: ["项目说明有点长，帮我找一下接下来该做什么。", "我会先读这份说明，把需要处理的事情单独列出来。整理好后，你可以再改标题和时间。"],
+  app: ["帮我打开微信。", "好，我来打开微信。"],
+};
+let conversationGeneration = 0;
+let conversationTimer;
+document.querySelectorAll("[data-conversation]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const generation = ++conversationGeneration;
+    window.clearTimeout(conversationTimer);
+    document.querySelectorAll("[data-conversation]").forEach((choice) => choice.setAttribute("aria-pressed", String(choice === button)));
+    const [question, answer] = conversationExamples[button.dataset.conversation];
+    const stream = document.querySelector("#conversation-stream");
+    const thinking = document.querySelector("#conversation-thinking");
+    const output = document.querySelector("#conversation-answer");
+    const userBubble = document.querySelector("#conversation-user");
+    userBubble.textContent = question;
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      userBubble.getAnimations().forEach(animation => animation.cancel());
+      userBubble.animate([{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "translateY(0)" }],
+        { duration: 380, easing: "cubic-bezier(.16,1,.3,1)" });
+    }
+    document.querySelector("#conversation-state").textContent = "正在琢磨";
+    document.querySelector("#conversation-action").hidden = true;
+    document.querySelector("#conversation-announcement").textContent = "";
+    output.textContent = "";
+    thinking.hidden = false;
+    stream.setAttribute("aria-busy", "true");
+    const finish = () => {
+      thinking.hidden = true;
+      stream.setAttribute("aria-busy", "false");
+      document.querySelector("#conversation-state").textContent = "在呢";
+      document.querySelector("#conversation-action").hidden = button.dataset.conversation !== "plan";
+      document.querySelector("#conversation-announcement").textContent = answer;
+    };
+    const characters = [...answer];
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let length = 0;
+    const typeNext = () => {
+      if (generation !== conversationGeneration) return;
+      thinking.hidden = true;
+      length = reduced ? characters.length : Math.min(characters.length, length + 2);
+      output.textContent = characters.slice(0, length).join("");
+      if (length < characters.length) conversationTimer = window.setTimeout(typeNext, 34);
+      else finish();
+    };
+    conversationTimer = window.setTimeout(typeNext, reduced ? 0 : 480);
+  });
+});
+function experienceShortcut(keyboardInitiated = false) {
+  document.querySelector("#demo").scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+  if (keyboardInitiated) trigger.focus({ preventScroll: true });
+  startDemo(keyboardInitiated);
+}
+document.querySelector("#conversation-action").addEventListener("click", event => experienceShortcut(event.detail === 0));
+let shortcutTimer;
+document.querySelector("#keyboard-demo").addEventListener("click", (event) => {
+  const keyboard = document.querySelector("#keyboard-demo");
+  keyboard.classList.add("is-pressed");
+  window.setTimeout(() => keyboard.classList.remove("is-pressed"), 200);
+  window.clearTimeout(shortcutTimer);
+  shortcutTimer = window.setTimeout(() => experienceShortcut(event.detail === 0), 260);
+});
+
+document.querySelectorAll(".keyboard-combo, .conversation-window, .brain-preview").forEach((surface) => {
+  let frame;
+  surface.addEventListener("pointermove", (event) => {
+    if (event.pointerType !== "mouse" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const rect = surface.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+      const amount = surface.classList.contains("keyboard-combo") ? 9 : 3;
+      surface.style.setProperty("--tilt-x", `${(.5 - y) * amount}deg`);
+      surface.style.setProperty("--tilt-y", `${(x - .5) * amount}deg`);
+      surface.style.setProperty("--light-x", `${x * 100}%`);
+      surface.style.setProperty("--light-y", `${y * 100}%`);
+    });
+  });
+  surface.addEventListener("pointerleave", () => {
+    cancelAnimationFrame(frame);
+    surface.style.setProperty("--tilt-x", "0deg");
+    surface.style.setProperty("--tilt-y", "0deg");
+  });
+});
+
 document.documentElement.classList.replace("no-js", "js");
 const opening = document.querySelector(".hero-wrapper");
 const openingText = opening.querySelector(".text-layer");

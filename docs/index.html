@@ -96,23 +96,24 @@
         <div class="hero-sticky" style="padding-top: 72px">
           <div class="image-stack" aria-hidden="true">
             <div class="card-wrap">
-              <div class="card">
-                <img src="assets/01-launcher.png" alt="" />
+              <div class="card opening-island">
+                <img src="assets/current-island.png" alt="" />
+                <span>始终在桌面，随时在身边。</span>
               </div>
             </div>
             <div class="card-wrap">
-              <div class="card"><img src="assets/02-sleep.png" alt="" /></div>
+              <div class="card current-screen"><img src="assets/current-pet-settings.png" alt="" /></div>
             </div>
             <div class="card-wrap">
-              <div class="card"><img src="assets/03-happy.png" alt="" /></div>
+              <div class="card current-screen"><img src="assets/current-voice.png" alt="" /></div>
             </div>
             <div class="card-wrap">
               <div class="card">
-                <img src="assets/04-thinking.png" alt="" />
+                <img src="assets/current-widgets.png" alt="" />
               </div>
             </div>
             <div class="card-wrap">
-              <div class="card"><img src="assets/05-idle.png" alt="" /></div>
+              <div class="card current-pet"><img src="assets/companion-idle.png" alt="" /></div>
             </div>
           </div>
 
@@ -122,7 +123,7 @@
             </h1>
             <p>
               小橘住在你的桌面。按下
-              <strong>Alt + F</strong
+              <strong><kbd>Alt</kbd> + <kbd>F</kbd></strong
               >，聊个想法、整理事项，或者一起处理文件。忙完了，继续安静陪着你。
             </p>
             <a href="#install" class="cta pulse"
@@ -357,6 +358,74 @@
           </li>
         </ol>
       </section>
+      <section class="shell shortcut-section" id="hotkey" aria-labelledby="shortcut-title">
+        <div>
+          <p class="eyebrow">ONE SMALL SHORTCUT.</p>
+          <h2 id="shortcut-title">不用切窗口。<br /><em>按 Alt + F。</em></h2>
+          <p>手头的内容不用关。想问个问题，或者想把今天的事理一下，在屏幕顶部接着说就好。</p>
+          <p class="shortcut-note">本地 / 云端语音直接录音。豆包兼容模式，再按右 Alt 说话。</p>
+        </div>
+        <div class="shortcut-playground">
+          <button class="keyboard-combo" id="keyboard-demo" type="button" aria-label="体验 Alt 加 F 唤起小橘的交互预览">
+            <span class="physical-key"><span class="key-top">Alt</span></span>
+            <span class="key-plus" aria-hidden="true">+</span>
+            <span class="physical-key letter-key"><span class="key-top">F</span></span>
+          </button>
+          <span class="keyboard-caption">按下键帽，体验完整过程。</span>
+          <div class="shortcut-legend"><span><kbd>Esc</kbd> 取消</span><span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> 提交输入</span></div>
+        </div>
+      </section>
+
+      <section class="conversation-section" id="conversation" aria-labelledby="conversation-title">
+        <div class="shell conversation-grid">
+          <div class="conversation-copy">
+            <p class="eyebrow">A CONVERSATION, AT YOUR DESK.</p>
+            <h2 id="conversation-title">今天的事，<br />慢慢说。</h2>
+            <p>从一个想法开始，也可以直接说要做什么。读文件、安排提醒、打开应用，在同一个对话里接着聊。</p>
+            <div class="conversation-options" role="group" aria-label="选择对话示例">
+              <button type="button" data-conversation="plan" aria-pressed="true">一起理思路</button>
+              <button type="button" data-conversation="file" aria-pressed="false">看看文件</button>
+              <button type="button" data-conversation="app" aria-pressed="false">帮我行动</button>
+            </div>
+          </div>
+          <div class="conversation-window">
+            <div class="conversation-bar"><img src="assets/companion-idle.png" width="32" height="32" alt="" /><strong>小橘</strong><span id="conversation-state">在呢</span><span class="conversation-dots" aria-hidden="true">···</span></div>
+            <div class="conversation-stream" id="conversation-stream" aria-busy="false">
+              <p class="conversation-user" id="conversation-user">这周的事情有点多，陪我理一下。</p>
+              <div class="conversation-assistant"><span class="conversation-thinking" id="conversation-thinking" hidden>正在琢磨<span aria-hidden="true"> · · ·</span></span><p id="conversation-answer">好，先从最挂心的那件说起。是什么时候要交，还是只是一直惦记着？我们一件件理。</p></div>
+              <button class="conversation-action" id="conversation-action" type="button">体验整理与确认 <span aria-hidden="true">↗</span></button>
+            </div>
+            <div class="conversation-composer"><span>有事，随时跟小橘说。</span><span aria-hidden="true">↑</span></div>
+            <p class="interaction-note">对话示例 · 不连接模型，不执行本机操作</p>
+            <p class="sr-only" id="conversation-announcement" aria-live="polite"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="shell brain-section" id="brain" aria-labelledby="brain-title">
+        <div class="section-heading">
+          <p class="eyebrow">YOUR MODEL. YOUR CHOICE.</p>
+          <h2 id="brain-title">已经有常用的模型？<br /><em>接着用就好。</em></h2>
+          <p>Claude Code、OpenAI、DeepSeek，或电脑里的 Ollama。选一个，看看该怎么连接。</p>
+        </div>
+        <div class="brain-grid">
+          <div class="brain-list" role="group" aria-label="选择模型连接示例">
+            <button class="brain-choice" type="button" data-brain="claude" aria-pressed="true"><span class="brain-number">01</span><span class="brain-symbol" aria-hidden="true">*</span><span><strong>Claude Code</strong><small>沿用已安装并配置的 CLI</small></span><span class="brain-method">CLI ↗</span></button>
+            <button class="brain-choice" type="button" data-brain="openai" aria-pressed="false"><span class="brain-number">02</span><span class="brain-symbol" aria-hidden="true">O</span><span><strong>OpenAI</strong><small>自己的 API Key 与模型名</small></span><span class="brain-method">API ↗</span></button>
+            <button class="brain-choice" type="button" data-brain="deepseek" aria-pressed="false"><span class="brain-number">03</span><span class="brain-symbol" aria-hidden="true">DS</span><span><strong>DeepSeek</strong><small>通过 OpenAI 兼容接口连接</small></span><span class="brain-method">API ↗</span></button>
+            <button class="brain-choice" type="button" data-brain="ollama" aria-pressed="false"><span class="brain-number">04</span><span class="brain-symbol" aria-hidden="true">o:</span><span><strong>Ollama</strong><small>连接电脑上正在运行的模型</small></span><span class="brain-method">LOCAL ↗</span></button>
+            <button class="brain-choice" type="button" data-brain="custom" aria-pressed="false"><span class="brain-number">05</span><span class="brain-symbol" aria-hidden="true">↗</span><span><strong>你的服务</strong><small>其他 OpenAI 兼容服务与自定义模型</small></span><span class="brain-method">CUSTOM ↗</span></button>
+          </div>
+          <div class="brain-preview">
+            <div class="brain-preview-heading"><img src="assets/logo.png" width="28" height="28" alt="" /><span>AI 连接</span><span class="brain-preview-path">设置 / AI 连接</span></div>
+            <p class="brain-selected" id="brain-selected">Claude Code</p>
+            <p class="brain-description" id="brain-description">已经配置好 Claude Code？在 AI 后端选择它，沿用本机 CLI 的登录与连接设置。</p>
+            <dl class="brain-fields"><div><dt>AI 后端</dt><dd id="brain-backend">Claude Code CLI</dd></div><div><dt id="brain-detail-label">前置准备</dt><dd id="brain-detail">安装并配置 Claude Code</dd></div><div><dt>在哪里改</dt><dd>原生设置侧栏 → AI 连接</dd></div></dl>
+            <div class="brain-preview-bottom"><span>连接方式预览，不收集密钥。</span><a href="#install">开始配置 ↗</a></div>
+          </div>
+        </div>
+      </section>
+
       <section
         class="surface-section"
         id="features"
