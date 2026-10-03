@@ -18,7 +18,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QToolButton, QSizePolicy, QPushButton, QPlainTextEdit, QScrollArea,
-    QApplication,
+    QApplication, QTextBrowser,
 )
 
 from theme import (
@@ -56,7 +56,69 @@ def _display_message_time(value: str) -> str:
 
 def _strip_command_tags(text: str) -> str:
     """Remove [APP:...], [SHELL:...], [CMD:...], [CLAUDE:...] tags for display."""
-    return _TAG_RE.sub("", text).strip()
+    lines = []
+    fence = None
+    for line in text.splitlines():
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker:
+            fence = None if fence and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) else marker.group(1) if fence is None else fence
+        if not fence and not marker and re.fullmatch(r"\[(APP|SHELL|CLAUDE|CMD):[^\]\n]+\]?[ \t]*", line):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+class MarkdownView(QTextBrowser):
+    def __init__(self):
+        super().__init__()
+        from PySide6.QtGui import QFont
+        font = QFont("Microsoft YaHei UI")
+        font.setPixelSize(14)
+        self.setFont(font)
+        self.document().setDefaultFont(font)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setReadOnly(True)
+        self.setOpenLinks(False)
+        self.setOpenExternalLinks(False)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.document().setDocumentMargin(0)
+        self.setStyleSheet(f"QTextBrowser {{background:transparent;color:{TEXT_PRIMARY};border:none;padding:0;font-size:14px;}}")
+        self.document().documentLayout().documentSizeChanged.connect(self._fit_height)
+        self.anchorClicked.connect(self._open_link)
+
+    def setText(self, text):
+        self.setHtml(text)
+        self._fit_height()
+
+    def _fit_height(self, *_):
+        import math
+        size = self.document().documentLayout().documentSize()
+        bar = self.horizontalScrollBar().sizeHint().height() if size.width() > self.viewport().width() + 1 else 0
+        height = math.ceil(size.height()) + bar + 4
+        if self.height() != height:
+            self.setFixedHeight(max(24, height))
+            parent = self.parentWidget()
+            if parent is not None:
+                content = getattr(parent, "_content_layout", None)
+                if content is not None:
+                    content.invalidate()
+                if parent.layout() is not None:
+                    parent.layout().invalidate()
+                parent.updateGeometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_height()
+
+    def loadResource(self, resource_type, name):
+        return None
+
+    def _open_link(self, url):
+        if url.scheme().lower() in ("http", "https", "mailto"):
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(url)
 
 # Avatar sprite path (chubby orange cat, 24x24)
 from config import ASSETS_DIR as _ASSETS, FONT_SCALE_LEVELS
@@ -259,19 +321,17 @@ class _MessageBubble(QFrame):
 
         # Content column (bubble + cmd + time + hover actions)
         content = QVBoxLayout()
+        self._content_layout = content
         content.setSpacing(2)
         if role == "user":
             content.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         # Bubble
-        self._bubble = QLabel()
-        self._bubble.setWordWrap(True)
-        self._bubble.setTextFormat(Qt.TextFormat.RichText)
-        self._bubble.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.LinksAccessibleByMouse
-        )
-        self._bubble.setOpenExternalLinks(True)
+        self._bubble = MarkdownView() if role == "ai" else QLabel()
+        if role != "ai":
+            self._bubble.setWordWrap(True)
+            self._bubble.setTextFormat(Qt.TextFormat.RichText)
+            self._bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         if role == "ai":
             self._bubble.setStyleSheet(
                 f"background:transparent;color:{TEXT_PRIMARY};border:none;"
@@ -349,6 +409,7 @@ class _MessageBubble(QFrame):
         # P1-3: AI bubble 流式期间不挂选项卡（流完后由 _finalize_options 处理）
         self._text = text
         # Strip command tags before display
+        self._is_streaming = streaming
         display_text = _strip_command_tags(text) if self._role == "ai" else text
         if self._role == "ai":
             if streaming:
@@ -390,12 +451,7 @@ class _MessageBubble(QFrame):
         """P3-4: 渲染 N 个任务卡，每张 3 按钮：📌 Pin / 🤖 让 AI 做 / ✗ 跳过。"""
         from theme import ACCENT_SOFT, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_MUTED, GREEN
         self._clear_task_cards()
-        parent_widget = self._bubble.parentWidget()
-        if parent_widget is None:
-            return
-        parent_layout = parent_widget.layout()
-        if parent_layout is None:
-            return
+        parent_layout = self._content_layout
         bubble_idx = parent_layout.indexOf(self._bubble)
         for i, task in enumerate(tasks):
             card = QFrame()
@@ -429,7 +485,7 @@ class _MessageBubble(QFrame):
             btn_skip = self._make_task_btn("✗ 跳过", "skip")
             btn_pin.clicked.connect(lambda _=False, t=task: self._on_task_pin(t))
             btn_ai.clicked.connect(lambda _=False, t=task: self._on_task_dispatch(t))
-            btn_skip.clicked.connect(lambda _=False, t=task: self._on_task_skip(t, card))
+            btn_skip.clicked.connect(lambda _=False, t=task, c=card: self._on_task_skip(t, c))
             h.addWidget(btn_pin)
             h.addWidget(btn_ai)
             h.addWidget(btn_skip)
@@ -510,12 +566,7 @@ class _MessageBubble(QFrame):
         # 找到 _bubble 的父 layout（content QVBoxLayout）—— 我们在 __init__ 里
         # 把 _bubble 加到了 `content`（QFrame 内层 layout）。
         # 这里我们用 _bubble.parent() 找到 content frame，再取它的 layout。
-        parent_widget = self._bubble.parentWidget()
-        if parent_widget is None:
-            return
-        parent_layout = parent_widget.layout()
-        if parent_layout is None:
-            return
+        parent_layout = self._content_layout
         for i, item in enumerate(items):
             btn = QToolButton()
             btn.setText(f"  {i+1}.  {item}  ")
@@ -554,7 +605,7 @@ class _MessageBubble(QFrame):
         self._renderer = renderer
         # 重新拿 _text 字段再渲染
         if hasattr(self, "_text"):
-            self._bubble.setText(self._renderer.render(self._text))
+            self.set_text(self._text, streaming=getattr(self, "_is_streaming", False))
 
     def _find_chat_window(self):
         """Walk up the parent chain to the owning ChatWindow.
@@ -578,7 +629,7 @@ class _MessageBubble(QFrame):
         # Bubble up to the owning ChatWindow via duck-typed lookup
         w = self._find_chat_window()
         if w is not None and hasattr(w, "_regenerate"):
-            w._regenerate()
+            w._regenerate(self)
 
     def enterEvent(self, _e):
         self._time_label.show()
@@ -685,44 +736,72 @@ class _TypingBubble(QFrame):
 
 
 class _CommandResult(QFrame):
-    def __init__(self, cmd: str, ok: bool, output: str = ""):
+    def __init__(self, cmd: str, ok: bool | None, output: str = "", *, title="本机操作", state=None):
         super().__init__()
-        self.setStyleSheet("background:transparent;border:none;")
+        self.setObjectName("toolResultCard")
+        self.setStyleSheet(f"QFrame#toolResultCard {{background:{BG_CARD};border:1px solid {BORDER_SUBTLE};border-radius:11px;}}")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 4)
-        message = output.strip()
-        lines = [line.strip() for line in message.splitlines() if line.strip()]
-        if ok and len(lines) == 1 and len(lines[0]) <= 120 and lines[0].startswith(
-                ("已打开", "已启动", "已创建", "已保存", "已完成", "已添加", "已关闭")):
-            summary_text = lines[0]
-        elif ok:
-            summary_text = "操作已完成" if not message else "操作已完成 · 可查看输出"
-        elif len(lines) == 1 and len(lines[0]) <= 120:
-            summary_text = lines[0]
-        else:
-            summary_text = "操作没有完成 · 可查看详情"
-        summary = QLabel(summary_text)
-        summary.setTextFormat(Qt.TextFormat.PlainText)
-        summary.setWordWrap(True)
-        summary.setStyleSheet(f"color:{TEXT_MUTED if ok else RED};font-size:12px;background:transparent;")
-        layout.addWidget(summary)
-        if cmd or message and message != summary_text:
-            details = QPushButton("查看详情")
-            details.setFixedHeight(24)
-            details.setStyleSheet(f"text-align:left;padding:0;color:{TEXT_MUTED};background:transparent;border:none;font-size:11px;")
-            details.setCheckable(True)
-            body = QPlainTextEdit()
-            body.setReadOnly(True)
-            body.setPlainText("\n".join(part for part in (cmd, message) if part))
-            body.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-            body.setMaximumHeight(150)
-            body.setMinimumHeight(64)
-            body.setStyleSheet(f"QPlainTextEdit {{color:{TEXT_SECONDARY};font-size:11px;"
-                               f"background:{BG_CARD};border:1px solid {BORDER_SUBTLE};"
-                               f"border-radius:7px;padding:7px;font-family:{FONT_MONO};}}")
-            body.hide()
-            details.toggled.connect(lambda expanded: details.setText("收起详情" if expanded else "查看详情"))
-            details.toggled.connect(body.setVisible)
-            layout.addWidget(details)
-            layout.addWidget(body)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        self._mark = QLabel("○")
+        self._mark.setFixedWidth(15)
+        header.addWidget(self._mark)
+        self._title = QLabel(title)
+        self._title.setTextFormat(Qt.TextFormat.PlainText)
+        self._title.setWordWrap(True)
+        self._title.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:12px;font-weight:600;background:transparent;border:none;")
+        header.addWidget(self._title, 1)
+        self._status = QLabel()
+        self._status.setStyleSheet(f"color:{TEXT_MUTED};font-size:10px;background:transparent;border:none;")
+        header.addWidget(self._status)
+        layout.addLayout(header)
+        self._summary = QLabel()
+        self._summary.setTextFormat(Qt.TextFormat.PlainText)
+        self._summary.setWordWrap(True)
+        self._summary.setStyleSheet(f"color:{TEXT_SECONDARY};font-size:11px;background:transparent;border:none;")
+        layout.addWidget(self._summary)
+        controls = QHBoxLayout()
+        self._expand = QPushButton("展开输出")
+        self._expand.setCheckable(True)
+        self._expand.setStyleSheet(f"QPushButton {{color:{TEXT_MUTED};background:transparent;border:none;padding:0;font-size:10px;}} QPushButton:hover {{color:{ACCENT};}}")
+        self._expand.setAccessibleName("展开或收起工具输出")
+        controls.addWidget(self._expand)
+        controls.addStretch()
+        self._copy = QPushButton("复制输出")
+        self._copy.setStyleSheet(self._expand.styleSheet())
+        controls.addWidget(self._copy)
+        layout.addLayout(controls)
+        self._body = QPlainTextEdit()
+        self._body.setReadOnly(True)
+        self._body.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._body.setFixedHeight(142)
+        self._body.setStyleSheet(f"QPlainTextEdit {{color:{TEXT_SECONDARY};font-size:11px;background:{BG_SUBTLE};border:none;border-radius:7px;padding:7px;font-family:{FONT_MONO};}}")
+        self._body.hide()
+        self._expand.toggled.connect(self._body.setVisible)
+        self._expand.toggled.connect(lambda expanded: self._expand.setText("收起输出" if expanded else "展开输出"))
+        self._copy.clicked.connect(lambda: QApplication.clipboard().setText(self._output))
+        layout.addWidget(self._body)
+        self._cmd = cmd
+        self.update_result(ok, output, state=state)
 
+    def update_result(self, ok, output, *, state=None):
+        self._output = output
+        pending = ok is None and state != "interrupted"
+        label = "进行中" if state == "running" else "等待执行" if pending else "结果待确认" if state == "interrupted" else "已完成" if ok else "未完成"
+        self._status.setText(label)
+        self._mark.setText("○" if pending else "?" if state == "interrupted" else "✓" if ok else "×")
+        self._mark.setStyleSheet(f"color:{TEXT_MUTED if pending else GREEN if ok else RED};font-size:15px;background:transparent;border:none;")
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        summary = lines[0][:160] if lines else ""
+        if ok and summary.startswith(("已打开", "已启动")):
+            summary = ""
+        self._summary.setText(summary)
+        self._summary.setVisible(bool(summary))
+        self._body.setPlainText("\n\n".join(part for part in (self._cmd, output) if part))
+        self._expand.setVisible(not pending and bool(self._cmd or output))
+        self._copy.setVisible(not pending and bool(output))
+        if pending:
+            self._body.hide()
+            self._expand.setChecked(False)

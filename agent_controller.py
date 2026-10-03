@@ -808,6 +808,7 @@ class AgentController(QObject):
         kinds = {"APP": ("open_app", "app_name"), "CMD": ("run_command", "command"),
                  "SHELL": ("run_shell", "command"), "CLAUDE": ("run_claude", "instruction")}
         approved = []
+        origin = self.main.chat._conversations[self.main.chat._active_idx] if self.main.chat else None
         tags = []
         fence = None
         html_depth = {"pre": 0, "code": 0}
@@ -822,7 +823,11 @@ class AgentController(QObject):
                 continue
             marker = re.match(r"^\s*(`{3,}|~{3,})", line)
             if marker:
-                fence = None if fence == marker.group(1)[0] else marker.group(1)[0]
+                sequence = marker.group(1)
+                if fence is None:
+                    fence = sequence
+                elif sequence[0] == fence[0] and len(sequence) >= len(fence) and not line[marker.end():].strip():
+                    fence = None
                 continue
             if fence or line.startswith((" ", "\t", ">")):
                 continue
@@ -876,16 +881,22 @@ class AgentController(QObject):
         if self.state.source not in ("voice", "tasks", "files", "reminder") or self.state.state == "idle":
             self._restore_at = 0
             self.state.set("executing", "", "", source="tool")
-        if self.main.chat:
-            self.main.chat.set_tool_busy(True, "正在执行本机操作")
+        operations = []
+        for tool, args, label in approved:
+            identity = uuid4().hex
+            if self.main.chat:
+                title = {"open_app": "打开应用", "run_command": "执行命令", "run_shell": "执行命令", "run_claude": "交给 Claude Code"}.get(tool, "本机操作")
+                self.main.chat.begin_tool(identity, title, label, origin=origin)
+            operations.append((identity, tool, args, label))
         registry = self.tools
         def worker():
-            for tool, args, label in approved:
+            for identity, tool, args, label in operations:
+                self.main._command_bridge.tool_started.emit(identity)
                 try:
                     result = registry.execute(tool, args, authorized=True)
-                    self.main._command_bridge.finished.emit(label, result.success, result.output or result.error)
+                    self.main._command_bridge.tool_finished.emit(identity, label, result.success, result.output or result.error)
                 except Exception as error:
-                    self.main._command_bridge.finished.emit(label, False, str(error)[:400])
+                    self.main._command_bridge.tool_finished.emit(identity, label, False, str(error)[:400])
         threading.Thread(target=worker, daemon=True).start()
 
     def tool_finished(self, success):

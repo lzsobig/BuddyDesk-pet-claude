@@ -14,6 +14,10 @@ P1-3: 编号列表自动检测 → 渲染为 <div class="opt-card" data-idx="N">
 chat_window 看到 class="opt-card" 时转为 QToolButton。
 """
 import re
+from html import escape
+from urllib.parse import urlsplit
+
+import mistune
 
 import config
 from theme import (
@@ -39,32 +43,33 @@ def _scale_px(html: str, scale: float) -> str:
 
 
 def _detect_option_list(text: str) -> list[str] | None:
-    """P1-3: 检测一段连续有序列表是否应被渲染为可点击选项。
-
-    返回清洗后的选项文本列表（去 "1. " 前缀），不通过返回 None。
-    """
-    lines = text.strip().split('\n')
-    items: list[str] = []
-    for line in lines:
-        m = re.match(r'^\s*\d+\.\s+(.+)$', line)
-        if not m:
-            # 列表中断
-            if items:
-                break
-            continue
-        content = m.group(1).strip()
-        items.append(content)
-    if not items:
+    lines = text.rstrip().splitlines()
+    items = []
+    position = len(lines)
+    while position:
+        match = re.match(r'^\s*(\d+)\.\s+(.+)$', lines[position - 1])
+        if not match:
+            break
+        items.insert(0, (int(match.group(1)), match.group(2).strip()))
+        position -= 1
+    if not 2 <= len(items) <= 7 or [number for number, _ in items] != list(range(1, len(items) + 1)):
         return None
-    if len(items) > 7:
+    prefix = '\n'.join(lines[:position])
+    if not re.search(r'选择|选项|可选|你想|你希望', prefix[-200:]):
         return None
-    for it in items:
-        if len(it) > 30:
-            return None
-    full = '\n'.join(items)
-    if _NARRATIVE_HINTS.search(full):
+    fence = None
+    for line in lines[:position]:
+        match = re.match(r'^ {0,3}(`{3,}|~{3,})', line)
+        if match:
+            marker = match.group(1)
+            if fence is None:
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence):
+                fence = None
+    values = [value for _, value in items]
+    if fence or any(len(value) > 30 for value in values) or _NARRATIVE_HINTS.search('\n'.join(values)):
         return None
-    return items
+    return values
 
 
 def _render_option_cards(items: list[str], scale: float) -> str:
@@ -86,11 +91,67 @@ def _render_option_cards(items: list[str], scale: float) -> str:
     return _scale_px('\n'.join(parts), scale)
 
 
+class _QtMarkdownHTML(mistune.HTMLRenderer):
+    def __init__(self, owner):
+        super().__init__(escape=True)
+        self.owner = owner
+
+    def paragraph(self, text):
+        return f'<p style="font-family:Microsoft YaHei UI;font-size:14px;margin-top:6px;margin-bottom:12px;line-height:145%;">{text}</p>'
+
+    def list(self, text, ordered, **attrs):
+        tag = "ol" if ordered else "ul"
+        start = f' start="{int(attrs["start"])}"' if ordered and "start" in attrs else ""
+        return f'<{tag}{start} style="font-family:Microsoft YaHei UI;font-size:14px;margin-top:6px;margin-bottom:10px;">{text}</{tag}>'
+
+    def heading(self, text, level, **attrs):
+        size = {1: 19, 2: 17, 3: 15}.get(level, 14)
+        return f'<h{level} style="font-size:{size}px;color:{TEXT_PRIMARY};margin:12px 0 6px;">{text}</h{level}>'
+
+    def block_code(self, code, info=None):
+        return self.owner._render_code_block((info or "code").split()[0], code.rstrip('\n'))
+
+    def codespan(self, text):
+        return f'<code style="font-family:{FONT_MONO};font-size:12px;color:{ACCENT};background-color:{BG_SUBTLE};">{escape(text)}</code>'
+
+    def link(self, text, url, title=None):
+        try:
+            allowed = urlsplit(url).scheme.lower() in ("http", "https", "mailto") and not any(ord(c) < 32 for c in url)
+        except ValueError:
+            allowed = False
+        if not allowed:
+            return text
+        return f'<a href="{escape(url, quote=True)}" style="color:{ACCENT};">{text}</a>'
+
+    def image(self, text, url, title=None):
+        return f'<span style="color:{TEXT_MUTED};">[图片：{text}]</span>'
+
+    def table(self, text):
+        return f'<table width="100%" border="1" cellspacing="0" cellpadding="7" style="border-color:{BORDER};font-family:Microsoft YaHei UI;font-size:13px;">{text}</table>'
+
+    def table_head(self, text):
+        return f'<tr bgcolor="{BG_SUBTLE}">{text}</tr>'
+
+    def table_body(self, text):
+        return text
+
+    def table_row(self, text):
+        return f'<tr>{text}</tr>'
+
+    def table_cell(self, text, align=None, head=False):
+        tag = "th" if head else "td"
+        return f'<{tag} align="{align or "left"}" style="color:{TEXT_PRIMARY};font-weight:{"600" if head else "400"};">{text}</{tag}>'
+
+    def task_list_item(self, text, checked=False, **attrs):
+        return f'<li>{"✓" if checked else "○"} {text}</li>'
+
+
 class MarkdownRenderer:
     """Converts markdown text to HTML for QTextEdit display."""
 
     def __init__(self, font_scale: float = 1.0):
-        self.font_scale = font_scale  # P1-2: 由 chat_window 注入
+        self.font_scale = font_scale
+        self._parser = mistune.create_markdown(renderer=_QtMarkdownHTML(self), plugins=["table", "strikethrough", "task_lists", "url"])
 
     def set_font_scale(self, scale: float) -> None:
         """P1-2: 实时更新字号缩放比例，已渲染的消息下次更新会生效。"""
@@ -171,91 +232,15 @@ class MarkdownRenderer:
         return remaining.rstrip(), tasks
 
     def render(self, text: str) -> str:
-        """Render markdown text to HTML."""
         if not text:
             return ""
-
-        # Split into lines and process
-        lines = text.split('\n')
-        result = []
-        i = 0
-        buffer = []
-
-        def flush_buffer():
-            nonlocal buffer
-            if buffer:
-                result.append(self._render_paragraph('\n'.join(buffer)))
-                buffer = []
-
-        while i < len(lines):
-            line = lines[i]
-
-            # Fenced code block
-            if line.strip().startswith('```'):
-                flush_buffer()
-                lang = line.strip()[3:].strip() or 'code'
-                code_lines = []
-                i += 1
-                while i < len(lines) and not lines[i].strip().startswith('```'):
-                    code_lines.append(lines[i])
-                    i += 1
-                result.append(self._render_code_block(lang, '\n'.join(code_lines)))
-                i += 1
-                continue
-
-            # Headers
-            if line.startswith('### '):
-                flush_buffer()
-                result.append(f'<h3 style="margin:8px 0 4px;font-size:13px;font-weight:600;color:{TEXT_PRIMARY};">{self._inline(line[4:])}</h3>')
-            elif line.startswith('## '):
-                flush_buffer()
-                result.append(f'<h2 style="margin:10px 0 6px;font-size:15px;font-weight:600;color:{TEXT_PRIMARY};">{self._inline(line[3:])}</h2>')
-            elif line.startswith('# '):
-                flush_buffer()
-                result.append(f'<h1 style="margin:12px 0 8px;font-size:17px;font-weight:600;color:{TEXT_PRIMARY};">{self._inline(line[2:])}</h1>')
-            # Blockquote
-            elif line.startswith('> '):
-                flush_buffer()
-                result.append(
-                    f'<div style="margin:6px 0;padding:6px 12px;background:{ACCENT_SOFT};'
-                    f'border-left:3px solid {ACCENT};color:{TEXT_SECONDARY};'
-                    f'font-style:italic;border-radius:0 6px 6px 0;">{self._inline(line[2:])}</div>'
-                )
-            # Unordered list
-            elif re.match(r'^[-*]\s+', line):
-                flush_buffer()
-                ul_text = re.sub(r'^[-*]\s+', '', line)
-                result.append(f'<li style="margin:2px 0 2px 14px;color:{TEXT_PRIMARY};list-style-type:disc;">{self._inline(ul_text)}</li>')
-            # Ordered list — 普通 li（可点击选项卡由 _MessageBubble 特殊处理）
-            elif re.match(r'^\d+\.\s+', line):
-                flush_buffer()
-                ol_text = re.sub(r'^\d+\.\s+', '', line)
-                result.append(f'<li style="margin:2px 0 2px 14px;list-style-type:decimal;color:{TEXT_PRIMARY};">{self._inline(ol_text)}</li>')
-            # Horizontal rule
-            elif line.strip() in ('---', '***'):
-                flush_buffer()
-                result.append(f'<hr style="border:none;border-top:1px solid {BORDER};margin:10px 0;">')
-            # Empty line
-            elif not line.strip():
-                flush_buffer()
-            else:
-                buffer.append(line)
-            i += 1
-
-        flush_buffer()
-        # P1-2: 末尾对所有 font-size: Npx 做缩放
-        return _scale_px('\n'.join(result), self.font_scale)
+        return _scale_px(self._parser(text), self.font_scale)
 
     def _render_code_block(self, lang: str, code: str) -> str:
-        """Render a fenced code block."""
-        wrapped = self._escape_html('\n'.join('\u200b'.join(line[index:index + 36] for index in range(0, len(line), 36))
-                            for line in code.split('\n')))
-        return (
-            f'<table width="100%" cellspacing="0" cellpadding="10" bgcolor="{BG_SUBTLE}">'
-            f'<tr><td><span style="color:{TEXT_MUTED};font-size:10px;">{self._escape_html(lang) or "code"}</span>'
-            f'<p style="margin-top:8px;margin-bottom:2px;color:{TEXT_PRIMARY};font-family:{FONT_MONO};font-size:12px;">'
-            f'{wrapped.replace(chr(10), "<br>").replace(" ", "&#160;")}</p></td></tr></table>'
-        )
+        return (f'<table width="100%" cellspacing="0" cellpadding="10" bgcolor="{BG_SUBTLE}"><tr><td>'
+                f'<p style="margin:0;color:{TEXT_MUTED};font-size:10px;">{escape(lang)}</p>'
+                f'<pre style="margin:8px 0 2px;color:{TEXT_PRIMARY};font-family:{FONT_MONO};font-size:12px;">'
+                f'{escape(code)}</pre></td></tr></table>')
 
     def _render_paragraph(self, text: str) -> str:
         """Render a paragraph with inline formatting."""
@@ -305,26 +290,4 @@ class MarkdownRenderer:
 
 
     def render_for_streaming(self, text: str) -> str:
-        """Render text for streaming - handles incomplete markdown gracefully."""
-        if not text:
-            return ""
-
-        # Count backticks to detect unclosed code blocks
-        total_backticks = text.count('`')
-        unclosed_code = total_backticks % 2 != 0
-
-        if unclosed_code:
-            # Find last ```
-            last_triple = text.rfind('```')
-            last_single = text.rfind('`')
-            if last_single > last_triple:
-                # Unclosed inline code - just escape it
-                return self.render(text + '`')
-            # Otherwise, find unclosed fenced code block
-            last_triple = text.rfind('```')
-            if last_triple >= 0:
-                before = text[:last_triple]
-                code = text[last_triple + 3:]
-                return self.render(before) + self._render_code_block('', code) + f'<span style="color:{ACCENT};font-weight:bold;">&#9612;</span>'
-
         return self.render(text)

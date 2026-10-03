@@ -80,6 +80,8 @@ class _VoiceBridge(QObject):
 class _CommandBridge(QObject):
     """Marshal confirmed command results from worker threads to the UI."""
     finished = Signal(str, bool, str)
+    tool_started = Signal(str)
+    tool_finished = Signal(str, str, bool, str)
 
 
 class BuddyDeskApp:
@@ -124,6 +126,8 @@ class BuddyDeskApp:
         self._clipboard_last: str = ""
         self._command_bridge = _CommandBridge()
         self._command_bridge.finished.connect(self._on_command_finished)
+        self._command_bridge.tool_started.connect(self._on_tool_started)
+        self._command_bridge.tool_finished.connect(self._on_tool_finished)
 
     def run(self):
         """Run the application."""
@@ -463,6 +467,18 @@ class BuddyDeskApp:
             self.chat.append_command_result(command, success, output)
         if self.agent:
             self.agent.tool_finished(success)
+
+    def _on_tool_started(self, identity):
+        if self.chat:
+            self.chat.mark_tool_started(identity)
+
+    def _on_tool_finished(self, identity, command, success, output):
+        try:
+            if self.chat:
+                self.chat.finish_tool(identity, command, success, output)
+        finally:
+            if self.agent:
+                self.agent.tool_finished(success)
 
     # ── State changes ───────────────────────────────────────────────
     def _ensure_chat(self):

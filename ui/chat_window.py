@@ -14,7 +14,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QColor, QPainter, QPalette
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget,
     QPushButton, QScrollArea, QApplication, QSizePolicy, QMenu, QListWidget, QListWidgetItem, QSizeGrip,
-    QFileDialog,
+    QFileDialog, QLayout,
 )
 
 from bridge import AIBridge
@@ -59,6 +59,8 @@ class ChatWindow(ChatBaseWindow):
         self._live_widget: _MessageBubble | None = None
         self._live_text: str = ""
         self._error_card = None
+        self._tool_operations = {}
+        self._tool_cards = {}
         self._sidebar_width = 0
         # Streaming render throttle: batch chunks, render at most every 80ms
         self._render_timer = QTimer()
@@ -66,7 +68,10 @@ class ChatWindow(ChatBaseWindow):
         self._render_timer.setInterval(80)
         self._render_timer.timeout.connect(self._flush_stream_render)
         # P1-2: 字号缩放（从 user_config 读 idx 还原 scale）
-        self._font_scale_idx = int(bridge.user_config.get("font_scale_idx", 1))
+        try:
+            self._font_scale_idx = min(len(FONT_SCALE_LEVELS) - 1, max(0, int(bridge.user_config.get("font_scale_idx", 1))))
+        except (TypeError, ValueError):
+            self._font_scale_idx = 1
         self._md = MarkdownRenderer(font_scale=FONT_SCALE_LEVELS[self._font_scale_idx])
 
         # ── Multi-conversation state ──
@@ -155,11 +160,14 @@ class ChatWindow(ChatBaseWindow):
         )
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._last_scroll_maximum = 0
+        self._scroll.verticalScrollBar().rangeChanged.connect(self._scroll_range_changed)
 
         self._message_container = QWidget()
         self._message_container.setStyleSheet("background:transparent;border:none;")
         self._scroll.viewport().setAutoFillBackground(False)
         self._messages_layout = QVBoxLayout(self._message_container)
+        self._messages_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
         self._messages_layout.setContentsMargins(24, 22, 24, 20)
         self._messages_layout.setSpacing(20)
         self._messages_layout.addStretch(1)
@@ -399,7 +407,7 @@ class ChatWindow(ChatBaseWindow):
             return False
         # 从后往前找最后一条 AI 消息
         for m in reversed(self.messages):
-            if _normalize_role(m.get("role", "")) == "ai" and m.get("content"):
+            if _normalize_role(m.get("role", "")) == "ai" and m.get("content") and m.get("kind") != "tool_result":
                 text = m["content"]
                 # 通过 main app 暴露的 pin_manager
                 main_app = self._find_main_app()
@@ -487,7 +495,7 @@ class ChatWindow(ChatBaseWindow):
         for i in range(self._messages_layout.count()):
             item = self._messages_layout.itemAt(i)
             w = item.widget() if item else None
-            if isinstance(w, _MessageBubble) and getattr(w, "role", "") == "ai":
+            if isinstance(w, _MessageBubble) and w._role == "ai":
                 w._refresh_md(self._md)
         # 持久化
         try:
@@ -512,7 +520,15 @@ class ChatWindow(ChatBaseWindow):
         else:
             self._messages_layout.insertWidget(idx, w)
         bar = self._scroll.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        if bar.value() >= self._last_scroll_maximum - 24:
+            QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
+
+    def _scroll_range_changed(self, minimum, maximum):
+        bar = self._scroll.verticalScrollBar()
+        follow = bar.value() >= self._last_scroll_maximum - 24
+        self._last_scroll_maximum = maximum
+        if follow:
+            bar.setValue(maximum)
 
     # ── P1-3 option card click ────────────────────────────────────
     def _on_option_clicked(self, text: str):
@@ -641,6 +657,9 @@ class ChatWindow(ChatBaseWindow):
 
     def _close_conversation(self, idx: int) -> None:
         """Archive conversation at *idx* and remove from tabs. Switch to adjacent if active."""
+        if 0 <= idx < len(self._conversations) and any(origin is self._conversations[idx] for origin, _ in self._tool_operations.values()):
+            self.set_integration_warning("这段会话还有本机操作，完成后再归档。")
+            return
         if len(self._conversations) <= 1:
             self._add_conversation()
         if idx < 0 or idx >= len(self._conversations):
@@ -692,6 +711,10 @@ class ChatWindow(ChatBaseWindow):
 
         convs = _cfg.load_conversations()
         if convs:
+            for conversation in convs:
+                for message in conversation.get("messages", []):
+                    if message.get("kind") == "tool_result" and message.get("tool_status") in ("queued", "running"):
+                        message.update(tool_status="interrupted", success=None, content="上次会话已结束，未能确认这项操作的执行结果。")
             self._conversations = convs
             self._active_idx = len(convs) - 1  # default to the last conversation
             # Render messages from the active conversation
@@ -736,6 +759,7 @@ class ChatWindow(ChatBaseWindow):
         self._typing_widget = None
         self._error_card = None
         self._welcome_card = None
+        self._tool_cards = {}
 
         while self._messages_layout.count() > 1:
             item = self._messages_layout.takeAt(0)
@@ -759,6 +783,11 @@ class ChatWindow(ChatBaseWindow):
         if not messages:
             self._sys_welcome()
         for msg in messages:
+            if msg.get("kind") == "tool_result":
+                card = _CommandResult(msg.get("command", ""), msg.get("success"), msg.get("content", ""), title=msg.get("title", "本机操作"), state=msg.get("tool_status"))
+                self._tool_cards[msg.get("operation_id", "")] = card
+                self._append_widget(card)
+                continue
             role = _normalize_role(msg.get("role", "user"))
             content = msg.get("content", "")
             time_str = msg.get("time", "")
@@ -766,6 +795,7 @@ class ChatWindow(ChatBaseWindow):
                 self._append_widget(_MessageBubble("user", content, time_str, renderer=self._md))
             else:
                 self._append_widget(_MessageBubble("ai", content, time_str, renderer=self._md))
+        self._on_state("executing" if self._tool_operations else "idle")
 
     # ── message ops (continued) ──
     def _sys(self, text: str):
@@ -858,6 +888,8 @@ class ChatWindow(ChatBaseWindow):
         self._update_tab_bar()
 
     def _retry_response(self):
+        if not self._streaming and self.messages and self.messages[-1].get("error_partial"):
+            self.messages.pop()
         if self._streaming or not self.messages or self.messages[-1].get("role") != "user":
             return
         self._dismiss_error()
@@ -957,6 +989,10 @@ class ChatWindow(ChatBaseWindow):
         if not self._streaming:
             return
         self._render_timer.stop()
+        if self._live_text and self._live_widget is not None:
+            self._live_widget.set_text(self._live_text, streaming=False)
+            self.messages.append({"role": "ai", "content": self._live_text,
+                                  "time": datetime.now().isoformat(), "error_partial": True})
         self._remove_typing()
         self._set_generating(False)
         self._dismiss_error()
@@ -994,7 +1030,9 @@ class ChatWindow(ChatBaseWindow):
         elif state == "executing" or tools_running:
             label = _preview if state == "executing" and _preview in {
                 "正在读取文件", "正在读取文件夹", "正在处理", "正在使用工具"} else ""
-            self.set_tool_busy(True, label)
+            self.set_tool_busy(not bool(self._tool_operations), label)
+            if self._tool_operations and not any(origin is self._conversations[self._active_idx] for origin, _ in self._tool_operations.values()):
+                state = "background_tool"
         else:
             self.set_tool_busy(False)
         self._avatar_thinking = state in ("thinking", "understanding", "transcribing", "executing")
@@ -1003,7 +1041,7 @@ class ChatWindow(ChatBaseWindow):
             self._typing_widget.set_progress(_preview)
         labels = {"thinking": "思考中…", "error": "需要留意", "listening": "正在听",
                   "transcribing": "正在转写", "understanding": "正在整理", "executing": "正在处理",
-                  "asking_confirmation": "等待确认", "reminding": "到提醒时间了", "success": "已完成"}
+                  "asking_confirmation": "等待确认", "reminding": "到提醒时间了", "success": "已完成", "background_tool": "后台操作"}
         self._status.setText(labels.get(state, ""))
         self._status.setVisible(state in labels)
         self._status.setStyleSheet(
@@ -1090,9 +1128,66 @@ class ChatWindow(ChatBaseWindow):
         pass
 
     def append_command_result(self, cmd: str, ok: bool, out: str):
-        self._append_widget(_CommandResult(cmd, ok, out))
+        from uuid import uuid4
+        identity = uuid4().hex
+        self.begin_tool(identity, "本机操作", cmd)
+        self.finish_tool(identity, cmd, ok, out)
+
+    def begin_tool(self, identity, title, command, origin=None):
+        from engine.command_engine import _redact_command
+        origin = origin or self._conversations[self._active_idx]
+        if title == "打开应用":
+            title += " · " + _redact_command(self.bridge._redact_keys(command))[:60]
+        message = {"role": "ai", "kind": "tool_result", "operation_id": identity,
+                   "title": title, "command": _redact_command(command), "content": "",
+                   "success": None, "tool_status": "queued", "time": datetime.now().isoformat()}
+        origin["messages"].append(message)
+        self._tool_operations[identity] = (origin, message)
+        if origin is self._conversations[self._active_idx]:
+            card = _CommandResult(message["command"], None, title=title)
+            self._tool_cards[identity] = card
+            self.set_tool_busy(False)
+            self._append_widget(card)
+        self._save_tool_history()
+
+    def _save_tool_history(self):
+        try:
+            self._save_all_conversations()
+        except OSError:
+            self.set_integration_warning("聊天记录暂时未能写入磁盘，工具状态仍会正常更新。")
+
+    def mark_tool_started(self, identity):
+        operation = self._tool_operations.get(identity)
+        if operation is None:
+            return
+        operation[1]["tool_status"] = "running"
+        card = self._tool_cards.get(identity)
+        if card:
+            card.update_result(None, "", state="running")
+
+    def finish_tool(self, identity, command, ok, output):
+        operation = self._tool_operations.pop(identity, None)
+        if operation is None:
+            return
+        from engine.command_engine import _redact_command
+        origin, message = operation
+        safe_output = _redact_command(self.bridge._redact_keys(str(output)))
+        if len(safe_output) > 64000:
+            safe_output = safe_output[:64000] + "\n[输出较长，已保留前 64000 个字符]"
+        message.update(content=safe_output, success=bool(ok), tool_status="success" if ok else "error")
+        if ok and message["title"] == "本机操作" and safe_output.startswith(("已打开", "已启动")):
+            message["title"] = safe_output.splitlines()[0][:100]
+        card = self._tool_cards.get(identity)
+        if card:
+            card._title.setText(message["title"])
+            card.update_result(ok, safe_output)
+        origin["updated_at"] = datetime.now().isoformat()
+        self._save_tool_history()
 
     def _clear(self):
+        if any(origin is self._conversations[self._active_idx] for origin, _ in self._tool_operations.values()):
+            self.set_integration_warning("本机操作还在执行，结束后再清空这段会话。")
+            return
         self._stop_generation()
         self.set_tool_busy(False)
         self._dismiss_error()
@@ -1154,10 +1249,20 @@ class ChatWindow(ChatBaseWindow):
             return
         super().keyPressEvent(e)
 
-    def _regenerate(self):
+    def _regenerate(self, source=None):
         """Remove the last AI message and resend the last user message."""
         if self._streaming or not self.messages:
             return
+        last_user = max((index for index, message in enumerate(self.messages) if message.get("role") == "user"), default=-1)
+        if any(message.get("kind") == "tool_result" for message in self.messages[last_user + 1:]):
+            self.set_integration_warning("这条回复已执行过本机操作。如需再次执行，请发送新消息。")
+            return
+        if source is not None and not isinstance(source, bool):
+            latest = next((self._messages_layout.itemAt(index).widget() for index in range(self._messages_layout.count() - 1, -1, -1)
+                          if isinstance(self._messages_layout.itemAt(index).widget(), _MessageBubble) and self._messages_layout.itemAt(index).widget()._role == "ai"), None)
+            if latest is not source:
+                self.set_integration_warning("只能重新生成当前会话的最后一条回答。")
+                return
         if self._error_card is not None:
             self._retry_response()
             return
@@ -1195,7 +1300,7 @@ class ChatWindow(ChatBaseWindow):
                 latest["external_context"] = True
             if isinstance(content, str) and (local_read_request(content) or "```" in content or "~~~" in content):
                 latest["external_context"] = True
-        return [dict(message) for message in self.messages]
+        return [dict(message) for message in self.messages if message.get("kind") != "tool_result"]
 
     def closeEvent(self, event):
         """Save conversation on window close."""

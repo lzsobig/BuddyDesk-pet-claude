@@ -285,8 +285,18 @@ def load_conversations() -> list[dict[str, Any]]:
 
 def save_conversations(convs: list[dict[str, Any]]) -> None:
     _ensure_config_dir()
-    with open(CONVERSATIONS_PATH, "w", encoding="utf-8") as f:
-        json.dump(convs, f, indent=2, ensure_ascii=False)
+    import tempfile
+    data = json.dumps(convs, indent=2, ensure_ascii=False)
+    descriptor, temporary = tempfile.mkstemp(prefix=".conversations-", suffix=".tmp", dir=CONFIG_DIR)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, CONVERSATIONS_PATH)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def load_archive() -> list[dict[str, Any]]:
