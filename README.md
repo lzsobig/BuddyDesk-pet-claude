@@ -115,6 +115,41 @@ DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 AP
 
 ## Quick Start
 
+当前提供源码安装，EXE 打包版尚未完成启动验证。本机验证使用 Python 3.12 64 位。
+
+### 源码安装与配置
+
+下载本仓库源码并解压，安装 Python 后，在源码根目录运行：
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+启动后从托盘或宠物菜单打开「设置 → 连接」，填写自己的模型服务地址、API Key 和模型名称；使用 Claude Code CLI 时需另行安装并配置 CLI。密钥、聊天和任务保存在当前用户的 `.buddydesk` 目录，源码不包含这些个人数据。
+
+### 使用原生 WinIsland
+
+`python main.py` 使用兼容的 Qt 灵动岛。完整的原生毛玻璃、岛内输入与今日事项需要启动仓库中 `winisland/` 的 Rust 程序。准备 Rust MSVC 工具链、Visual Studio C++ Build Tools 和 LLVM 后，在源码根目录编译：
+
+```powershell
+cargo build --release --manifest-path winisland/Cargo.toml
+```
+
+在两个终端中分别启动，先运行助手，再运行灵动岛：
+
+```powershell
+python main.py --winisland --background
+```
+
+```powershell
+.\winisland\target\release\WinIsland.exe --companion
+```
+
+启动后按 `Alt+F` 和小橘交互。任务整理或修改先核对，确认后才更新灵动岛；点击事项前的圆圈可完成或撤销完成。
+
+语音在「设置 → 语音」配置：本地模式可一键安装 SenseVoice-Small ONNX 或选择已有模型目录；云端模式填写支持 `/audio/transcriptions` 的 API 基础地址、语音 Key 和模型；豆包兼容模式仍需按住右 Alt 说话。先点「试说一句」验证，再保存。
+
 <details open>
 <summary><b>One-Click Launch</b> (recommended)</summary>
 
@@ -135,7 +170,7 @@ DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 AP
 python -m PyInstaller --clean --noconfirm build.spec
 ```
 
-构建完成后运行 `dist/BuddyDesk/BuddyDesk.exe`。请保持 `dist/BuddyDesk/_internal` 与 exe 一起分发，不要只复制 exe 文件。打包版不需要安装 Python 或项目依赖；首次启动仍需要在启动配置中选择 AI 后端并填写对应配置。
+该流程仍在调试，当前不提供已验证的 EXE 发布包。构建前需要准备 WinIsland 的 release 程序；可用 `BUDDYDESK_WINISLAND_EXE` 环境变量指定其路径。生成的 onedir 包需保持 `_internal` 与 exe 在一起，不能只复制 exe。
 
 </details>
 
