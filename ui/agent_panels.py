@@ -3,10 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QDateTime, QDate, QTime, QTimer, QSize, QPoint
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QPlainTextEdit, QLineEdit, QListWidget, QListWidgetItem, QInputDialog,
-    QFrame, QScrollArea, QWidget)
+    QFrame, QScrollArea, QWidget, QAbstractItemView)
 
 
 def display_time(value):
@@ -18,6 +18,298 @@ def parse_time(value):
         return None
     result = datetime.fromisoformat(value.strip())
     return result.astimezone().isoformat()
+
+
+class TimeWheel(QListWidget):
+    rangeRequested = Signal(int)
+
+    def __init__(self, labels, index=0, parent=None):
+        super().__init__(parent)
+        self.setObjectName("timeWheel")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setFixedHeight(140)
+        self.setUniformItemSizes(True)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._angle_remainder = 0
+        self._pixel_remainder = 0
+        self._labels_revision = 0
+        self.set_labels(labels, index)
+        self.currentRowChanged.connect(self._center)
+
+    def set_labels(self, labels, index):
+        self._labels_revision += 1
+        blocked = self.blockSignals(True)
+        self.clear()
+        self._value_count = len(labels)
+        for position, label in enumerate(["", "", *labels, "", ""]):
+            item = QListWidgetItem(label)
+            item.setSizeHint(QSize(20, 28))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if position < 2 or position >= len(labels) + 2:
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.addItem(item)
+        self.setCurrentRow(index + 2)
+        self.blockSignals(blocked)
+        self._center(self.currentRow())
+
+    def index(self):
+        return self.currentRow() - 2
+
+    def set_index(self, index):
+        if index < 0 or index >= self._value_count:
+            revision = self._labels_revision
+            self.rangeRequested.emit(index - self.index())
+            if revision != self._labels_revision:
+                return
+        self.setCurrentRow(min(max(0, index), self._value_count - 1) + 2)
+
+    def _center(self, row):
+        if 2 <= row < self._value_count + 2:
+            self.scrollToItem(self.item(row), QAbstractItemView.ScrollHint.PositionAtCenter)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, lambda: self._center(self.currentRow()))
+
+    def wheelEvent(self, event):
+        if event.angleDelta().y():
+            self._angle_remainder += event.angleDelta().y()
+            steps = int(self._angle_remainder / 120)
+            self._angle_remainder -= steps * 120
+        else:
+            self._pixel_remainder += event.pixelDelta().y()
+            steps = int(self._pixel_remainder / 28)
+            self._pixel_remainder -= steps * 28
+        if steps:
+            self.set_index(self.index() - steps)
+        event.accept()
+
+    def keyPressEvent(self, event):
+        steps = {Qt.Key.Key_Up: -1, Qt.Key.Key_Down: 1,
+                 Qt.Key.Key_PageUp: -5, Qt.Key.Key_PageDown: 5}
+        if event.key() in steps:
+            self.set_index(self.index() + steps[event.key()])
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class TimePickerDialog(QDialog):
+    def __init__(self, title, value=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedWidth(360)
+        self.setStyleSheet("""
+            QWidget { background: transparent; color: #f2eee9;
+                font-family: 'Microsoft YaHei UI'; }
+            QLabel { background: transparent; border: none; }
+            QPushButton { background: transparent; border: none; border-radius: 8px;
+                color: #bfb9b4; padding: 8px 12px; }
+            QPushButton:hover { background: #343238; color: #f2eee9; }
+            QPushButton#primary { background: #efae78; color: #191511; }
+            QListWidget#timeWheel { background: #202126; border: none;
+                border-radius: 8px; padding: 0; outline: 0; font-size: 13px; }
+            QListWidget#timeWheel::item { color: #aaa39d; border: none; padding: 0; }
+            QListWidget#timeWheel::item:selected { background: #3b3028; color: #f2c39f;
+                border: none; border-radius: 6px; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(26, 24, 26, 24)
+        heading = QLabel(title)
+        heading.setStyleSheet("font-size:16px;font-weight:600;")
+        layout.addWidget(heading)
+        initial = datetime.fromisoformat(value).astimezone() if value else (
+            datetime.now().astimezone() + timedelta(minutes=5)).replace(second=0, microsecond=0)
+        self._initial = initial
+        today = datetime.now().astimezone().date()
+        self._today = today
+        self._dates = self._near_dates(initial.date(), 180)
+        self.day = TimeWheel(self._date_labels(), self._dates.index(initial.date()))
+        self.day.rangeRequested.connect(self._extend_dates)
+        self.hour = TimeWheel([f"{hour:02d}" for hour in range(24)], initial.hour)
+        self.minute = TimeWheel([f"{minute:02d}" for minute in range(60)], initial.minute)
+        wheels = QHBoxLayout()
+        wheels.setSpacing(8)
+        for label, wheel, stretch in (("日期", self.day, 2), ("时", self.hour, 1), ("分", self.minute, 1)):
+            column = QVBoxLayout()
+            caption = QLabel(label)
+            caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            caption.setStyleSheet("color:#aaa19b;font-size:11px;")
+            column.addWidget(caption)
+            wheel.setAccessibleName("选择" + label)
+            column.addWidget(wheel)
+            wheels.addLayout(column, stretch)
+        layout.addLayout(wheels)
+        shortcuts = QHBoxLayout()
+        for label, days in (("今天", 0), ("明天", 1)):
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, offset=days:
+                self._select_date(datetime.now().astimezone().date() + timedelta(days=offset)))
+            shortcuts.addWidget(button)
+        shortcuts.addStretch()
+        layout.addLayout(shortcuts)
+        self.feedback = QLabel("")
+        self.feedback.setStyleSheet("color:#e58f81;font-size:12px;")
+        self.feedback.hide()
+        layout.addWidget(self.feedback)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        actions.addWidget(cancel)
+        confirm = QPushButton("选好了")
+        confirm.setObjectName("primary")
+        confirm.setDefault(True)
+        confirm.clicked.connect(self.confirm)
+        actions.addWidget(confirm)
+        layout.addLayout(actions)
+
+    def _date_labels(self):
+        labels = []
+        for day in self._dates:
+            label = day.strftime("%m/%d" if day.year == self._today.year else "%Y/%m/%d")
+            if day == self._today:
+                label = "今天 " + label
+            elif day == self._today + timedelta(days=1):
+                label = "明天 " + label
+            labels.append(label)
+        return labels
+
+    @staticmethod
+    def _near_dates(day, after):
+        dates = []
+        for offset in range(-30, after + 1):
+            try:
+                dates.append(day + timedelta(days=offset))
+            except OverflowError:
+                continue
+        return dates
+
+    def _select_date(self, day):
+        if day not in self._dates:
+            self._dates = self._near_dates(day, 90)
+            self.day.set_labels(self._date_labels(), self._dates.index(day))
+        else:
+            self.day.set_index(self._dates.index(day))
+
+    def _extend_dates(self, offset):
+        try:
+            self._select_date(self._dates[self.day.index()] + timedelta(days=offset))
+        except OverflowError:
+            return
+
+    def paintEvent(self, event):
+        from ui.window_surface import paint_window_surface
+        paint_window_surface(self, dark=True)
+
+    def value(self):
+        date = self._dates[self.day.index()]
+        if (date == self._initial.date() and self.hour.index() == self._initial.hour
+                and self.minute.index() == self._initial.minute):
+            return self._initial.isoformat()
+        selected = QDateTime(QDate(date.year, date.month, date.day), QTime(self.hour.index(), self.minute.index()))
+        if not selected.isValid() or selected.time().hour() != self.hour.index():
+            raise ValueError("这个时刻不可用，请滚动选择相邻时间")
+        return datetime.fromtimestamp(selected.toSecsSinceEpoch()).astimezone().isoformat()
+
+    def confirm(self):
+        try:
+            if datetime.fromisoformat(self.value()) <= datetime.now().astimezone():
+                raise ValueError("这个时间已经过去了，请选一个未来时间")
+        except ValueError as error:
+            self.feedback.setText(str(error))
+            self.feedback.show()
+            return
+        self.accept()
+
+
+class TimeField(QWidget):
+    valueChanged = Signal()
+
+    def __init__(self, label, values, multiple=False, parent=None):
+        super().__init__(parent)
+        self.setObjectName("timeField")
+        self.setAccessibleName(label)
+        self.label, self.multiple = label, multiple
+        self._values = list(values)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(5)
+        self._refresh()
+
+    def values(self):
+        return list(self._values)
+
+    def _refresh(self):
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            item.widget().hide()
+            item.widget().deleteLater()
+        for index, value in enumerate(self._values):
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            button = QPushButton(self.label + " · " + display_time(value))
+            button.setObjectName("timeValue")
+            button.setAutoDefault(True)
+            button.clicked.connect(lambda checked=False, position=index: self.choose(position))
+            row.addWidget(button, 1)
+            if index == 0:
+                self.setFocusProxy(button)
+            remove = QPushButton("×")
+            remove.setFixedWidth(28)
+            remove.setAutoDefault(True)
+            remove.setToolTip("移除" + self.label)
+            remove.clicked.connect(lambda checked=False, position=index: self.remove(position))
+            row.addWidget(remove)
+            self._layout.addWidget(container)
+        if self.multiple or not self._values:
+            add = QPushButton(("添加" if self.multiple else "选择") + self.label)
+            add.setObjectName("timeValue")
+            add.setAutoDefault(True)
+            add.clicked.connect(lambda: self.choose())
+            self._layout.addWidget(add)
+            if not self._values:
+                self.setFocusProxy(add)
+
+    def choose(self, index=None):
+        value = self._values[index] if index is not None else None
+        dialog = TimePickerDialog(self.label, value, self)
+        dialog.adjustSize()
+        anchor_widget = self._layout.itemAt(index if index is not None else self._layout.count() - 1).widget()
+        anchor = anchor_widget.mapToGlobal(QPoint(0, anchor_widget.height()))
+        available = self.screen().availableGeometry()
+        x = min(max(available.left(), anchor.x()), available.right() - dialog.width() + 1)
+        y = anchor.y() + 4
+        if y + dialog.height() > available.bottom():
+            y = anchor_widget.mapToGlobal(QPoint(0, 0)).y() - dialog.height() - 4
+        dialog.move(x, max(available.top(), y))
+        selected = dialog.value() if dialog.exec() == QDialog.DialogCode.Accepted else None
+        dialog.deleteLater()
+        if selected is not None:
+            before = list(self._values)
+            if index is not None:
+                if datetime.fromisoformat(selected) != datetime.fromisoformat(value):
+                    self._values[index] = selected
+            elif self.multiple:
+                if all(datetime.fromisoformat(selected) != datetime.fromisoformat(existing)
+                       for existing in self._values):
+                    self._values.append(selected)
+            else:
+                self._values = [selected]
+            if self._values != before:
+                self._refresh()
+                self.valueChanged.emit()
+
+    def remove(self, index):
+        self._values.pop(index)
+        self._refresh()
+        self.valueChanged.emit()
 
 
 class DraftDialog(QDialog):
@@ -40,7 +332,7 @@ class DraftDialog(QDialog):
         self._drag_origin = None
         self.setStyleSheet("""
             QDialog#draftDialog { color: #f2eee9; background: transparent; }
-            QDialog#draftDialog QWidget { font-family: 'Microsoft YaHei UI'; }
+            QWidget { font-family: 'Microsoft YaHei UI'; color: #f2eee9; background: transparent; }
             QLabel { color: #f2eee9; background: transparent; }
             QFrame#draftCard { background: transparent; border: none;
                 border-bottom: 1px solid #292a2e; }
@@ -63,6 +355,10 @@ class DraftDialog(QDialog):
             QPushButton#timeToggle { color: #a59b94; font-size: 11px; padding: 0 5px;
                 text-align: left; }
             QPushButton#timeToggle:hover { color: #efae78; background: transparent; }
+            QPushButton#timeValue { background: #25262a; border: 1px solid #434047;
+                padding: 8px 10px; color: #d6d0ca; }
+            QPushButton#timeValue:hover { border-color: #a77957; color: #f2eee9; }
+            QWidget#timeField[error="true"] QPushButton#timeValue { border-color: #d57167; }
             QPushButton#acceptQuestion { color: #c6a17e; font-size: 11px;
                 padding: 2px 5px; }
             QPushButton#acceptQuestion:disabled { color: #9cae9d; background: transparent; }
@@ -83,8 +379,8 @@ class DraftDialog(QDialog):
         close_button.clicked.connect(self.reject)
         heading.addWidget(close_button)
         layout.addLayout(heading)
-        hint = QLabel("修改后，加入灵动岛" if drafts and not editing else
-                      "修改后保存" if editing else "还没有可加入的事项")
+        hint = QLabel("修改后，按 Enter 或点击“加入灵动岛”" if drafts and not editing else
+                      "修改后，按 Enter 保存" if editing else "还没有可加入的事项")
         hint.setStyleSheet("color:#aaa19b;font-size:12px;")
         layout.addWidget(hint)
 
@@ -145,6 +441,7 @@ class DraftDialog(QDialog):
         self.primary.clicked.connect(self.confirm)
         controls.addWidget(self.primary)
         layout.addLayout(controls)
+        self.primary.setDefault(True)
 
     def paintEvent(self, event):
         from ui.window_surface import paint_window_surface
@@ -194,12 +491,8 @@ class DraftDialog(QDialog):
         time_layout = QVBoxLayout(time_panel)
         time_layout.setContentsMargins(0, 4, 0, 0)
         time_layout.setSpacing(5)
-        due = QLineEdit(display_time(draft.get("due_at")))
-        due.setPlaceholderText("截止：今日 18:00 / 明天 09:00 / 年-月-日 时:分")
-        due.setAccessibleName("截止时间")
-        reminders = QLineEdit("; ".join(display_time(t) for t in draft.get("reminder_times", [])))
-        reminders.setPlaceholderText("提醒：可填多个时间，用分号隔开")
-        reminders.setAccessibleName("提醒时间")
+        due = TimeField("截止时间", [draft["due_at"]] if draft.get("due_at") else [])
+        reminders = TimeField("提醒时间", draft.get("reminder_times", []), multiple=True)
         time_layout.addWidget(due)
         time_layout.addWidget(reminders)
         time_panel.hide()
@@ -222,15 +515,18 @@ class DraftDialog(QDialog):
         error.hide()
         card_layout.addWidget(error)
         title_input.textEdited.connect(lambda: self._clear_error(error, title_input))
-        due.textEdited.connect(lambda: self._clear_error(error, due))
-        reminders.textEdited.connect(lambda: self._clear_error(error, reminders))
+        due.valueChanged.connect(lambda: self._clear_error(error, due))
+        reminders.valueChanged.connect(lambda: self._clear_error(error, reminders))
         row = {"original": draft, "card": card, "title": title_input,
                "due": due, "reminders": reminders, "time_panel": time_panel,
                "error": error, "summary": summary, "accept": accept, "accepted": False}
         if accept is not None:
             accept.clicked.connect(lambda: self._accept_question(row))
-            for field in (title_input, due, reminders):
-                field.textChanged.connect(lambda _text, item=row: self._reset_question_acceptance(item))
+            title_input.textChanged.connect(lambda _text, item=row: self._reset_question_acceptance(item))
+            for field in (due, reminders):
+                field.valueChanged.connect(lambda item=row: self._reset_question_acceptance(item))
+        for field in (due, reminders):
+            field.valueChanged.connect(lambda item=row: self._refresh_time_summary(item))
         self.items_layout.addWidget(card)
         self.rows.append(row)
 
@@ -247,6 +543,11 @@ class DraftDialog(QDialog):
         row["accept"].setText("已按当前内容确认")
         row["accept"].setEnabled(False)
         row["error"].hide()
+
+    def _refresh_time_summary(self, row):
+        due = row["due"].values()
+        row["summary"].setText(self._time_summary({
+            "due_at": due[0] if due else None, "reminder_times": row["reminders"].values()}))
 
     @staticmethod
     def _questions_resolved(questions, due_changed, due, reminders_changed, reminders):
@@ -286,6 +587,7 @@ class DraftDialog(QDialog):
         if field is not row["title"] and not row["time_panel"].isVisible():
             self._toggle_time_panel(row["time_panel"])
         field.setFocus()
+        self.scroll.ensureWidgetVisible(field, 0, 12)
 
     def show_error(self, message):
         self.feedback.setText(str(message))
@@ -305,29 +607,6 @@ class DraftDialog(QDialog):
         if panel.isVisible():
             self.scroll.ensureWidgetVisible(panel, 0, 12)
 
-    @staticmethod
-    def _parse_input_time(value):
-        value = value.strip()
-        if not value:
-            return None
-        now = datetime.now().astimezone()
-        day = None
-        for prefix, offset in (("今天", 0), ("今日", 0), ("明天", 1)):
-            if value.startswith(prefix):
-                day = (now + timedelta(days=offset)).date()
-                value = value[len(prefix):].strip()
-                break
-        try:
-            if day is not None:
-                parsed = datetime.strptime(value, "%H:%M").replace(year=day.year, month=day.month, day=day.day)
-            elif len(value) == 5 and value[2] == ":":
-                parsed = datetime.strptime(value, "%H:%M").replace(year=now.year, month=now.month, day=now.day)
-            else:
-                parsed = datetime.fromisoformat(value)
-        except ValueError as error:
-            raise ValueError("时间格式请填 今日 18:00、明天 09:00 或 2026-10-02 18:00") from error
-        return parsed.astimezone().isoformat()
-
     def reparse(self):
         self.revise.emit(self.transcript.toPlainText())
 
@@ -345,27 +624,16 @@ class DraftDialog(QDialog):
             if not title:
                 self._show_error(row, row["title"], "请填写这件事的名称")
                 return
-            due_changed = row["due"].text().strip() != display_time(original.get("due_at"))
-            reminders_changed = row["reminders"].text().strip() != "; ".join(
-                display_time(t) for t in original.get("reminder_times", []))
-            try:
-                due = self._parse_input_time(row["due"].text()) if due_changed else original.get("due_at")
-            except ValueError as error:
-                self._show_error(row, row["due"], str(error))
-                return
-            due_changed = due_changed and (not due or not original.get("due_at") or
-                datetime.fromisoformat(due) != datetime.fromisoformat(original["due_at"]))
+            due_values = row["due"].values()
+            due = due_values[0] if due_values else None
+            original_due = original.get("due_at")
+            due_changed = (datetime.fromisoformat(due) != datetime.fromisoformat(original_due)
+                           if due and original_due else due != original_due)
             if due and (not self.editing or due_changed) and datetime.fromisoformat(due) < now:
                 self._show_error(row, row["due"], "截止时间已过去，请改成未来时间")
                 return
-            try:
-                reminders = ([self._parse_input_time(value) for value in
-                    row["reminders"].text().replace("；", ";").split(";") if value.strip()]
-                    if reminders_changed else original.get("reminder_times", []))
-            except ValueError as error:
-                self._show_error(row, row["reminders"], str(error))
-                return
-            reminders_changed = reminders_changed and (
+            reminders = row["reminders"].values()
+            reminders_changed = (
                 [datetime.fromisoformat(value) for value in reminders] !=
                 [datetime.fromisoformat(value) for value in original.get("reminder_times", [])])
             if (not self.editing or reminders_changed) and any(
@@ -466,7 +734,7 @@ class ReminderCard(QDialog):
 
 
 class TasksDialog(QDialog):
-    completed = Signal(str)
+    completed = Signal(str, bool)
     detail = Signal(str)
     add_requested = Signal()
 
@@ -476,21 +744,48 @@ class TasksDialog(QDialog):
         self.resize(410, 420)
         layout = QVBoxLayout(self)
         self.items = QListWidget()
+        self._completed = {task["id"]: task["status"] == "done" for task in tasks}
         for task in tasks:
             text = task["title"]
             if task.get("due_at"):
                 text += "\n" + display_time(task["due_at"])
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, task["id"])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if task["status"] == "done" else Qt.CheckState.Unchecked)
             self.items.addItem(item)
+        self.items.itemChanged.connect(self._completion_requested)
         self.items.itemDoubleClicked.connect(lambda item: self.detail.emit(item.data(Qt.ItemDataRole.UserRole)))
         layout.addWidget(self.items)
         controls = QHBoxLayout()
-        for name, callback in (("完成", lambda: self._selected(self.completed)), ("查看 / 编辑", lambda: self._selected(self.detail)), ("语音添加", self.add_requested.emit)):
+        for name, callback in (("完成 / 取消", self._toggle_selected), ("查看 / 编辑", lambda: self._selected(self.detail)), ("语音添加", self.add_requested.emit)):
             button = QPushButton(name)
             button.clicked.connect(callback)
             controls.addWidget(button)
         layout.addLayout(controls)
+
+    def _toggle_selected(self):
+        item = self.items.currentItem()
+        if item:
+            item.setCheckState(Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked)
+
+    def _completion_requested(self, item):
+        identity = item.data(Qt.ItemDataRole.UserRole)
+        requested = item.checkState() == Qt.CheckState.Checked
+        blocked = self.items.blockSignals(True)
+        item.setCheckState(Qt.CheckState.Checked if self._completed[identity] else Qt.CheckState.Unchecked)
+        self.items.blockSignals(blocked)
+        self.completed.emit(identity, requested)
+
+    def update_task(self, task):
+        self._completed[task["id"]] = task["status"] == "done"
+        blocked = self.items.blockSignals(True)
+        for index in range(self.items.count()):
+            item = self.items.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) == task["id"]:
+                item.setCheckState(Qt.CheckState.Checked if self._completed[task["id"]] else Qt.CheckState.Unchecked)
+                break
+        self.items.blockSignals(blocked)
 
     def _selected(self, signal):
         item = self.items.currentItem()
@@ -502,6 +797,7 @@ class TaskDetail(QDialog):
     completed = Signal()
     later = Signal(int)
     edit = Signal()
+    deleted = Signal()
 
     def __init__(self, task):
         super().__init__()
@@ -527,11 +823,26 @@ class TaskDetail(QDialog):
             detail.setStyleSheet("color:#667181;font-size:12px;padding:8px 0;")
             layout.addWidget(detail)
         controls = QHBoxLayout()
-        for text, callback in (("完成", self.completed.emit), ("稍后提醒", self.choose_later), ("编辑", self.edit.emit)):
+        self.complete_button = QPushButton()
+        self.complete_button.clicked.connect(self.completed.emit)
+        controls.addWidget(self.complete_button)
+        self.later_button = QPushButton("稍后提醒")
+        self.later_button.clicked.connect(self.choose_later)
+        controls.addWidget(self.later_button)
+        for text, callback in (("编辑", self.edit.emit),):
             button = QPushButton(text)
             button.clicked.connect(callback)
             controls.addWidget(button)
         layout.addLayout(controls)
+        delete = QPushButton("删除事项")
+        delete.setStyleSheet("color:#8b6660;background:transparent;border:none;padding:4px 0;")
+        delete.clicked.connect(self.deleted.emit)
+        layout.addWidget(delete, 0, Qt.AlignmentFlag.AlignRight)
+        self.set_completed(task["status"] == "done")
+
+    def set_completed(self, completed):
+        self.complete_button.setText("取消完成" if completed else "完成")
+        self.later_button.setEnabled(not completed)
 
     def choose_later(self):
         minutes, ok = QInputDialog.getInt(self, "稍后提醒", "多少分钟后", 10, 1, 10080)

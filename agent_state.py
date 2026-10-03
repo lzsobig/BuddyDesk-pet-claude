@@ -13,13 +13,18 @@ class AgentStateStore(QObject):
         self.state = "idle"
         self.label = ""
         self.transcript = ""
+        self.source = "system"
         self.level = 0.0
         self.revision = 0
 
-    def set(self, state: str, label: str = "", transcript: str | None = None):
+    def set(self, state: str, label: str = "", transcript: str | None = None, *, source: str | None = None):
         if state not in self.STATES:
             raise ValueError("Unknown agent state")
         self.state, self.label = state, label[:240]
+        if source is not None:
+            self.source = source
+        if state == "idle":
+            self.source = "system"
         if transcript is not None:
             self.transcript = transcript[:12000]
         if state != "listening":
@@ -38,4 +43,4 @@ class AgentStateStore(QObject):
 
     def snapshot(self) -> dict:
         return {"state": self.state, "label": self.label, "transcript": self.transcript,
-                "level": self.level, "revision": self.revision}
+                "level": self.level, "revision": self.revision, "source": self.source}

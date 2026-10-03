@@ -20,6 +20,7 @@ class ToolDefinition:
     parameters: dict
     permission_level: int
     handler: Callable
+    audits_transactionally: bool = False
 
 
 class ToolRegistry:
@@ -57,7 +58,8 @@ class ToolRegistry:
             raise PermissionRequired("需要确认后才能执行：" + tool.description)
         try:
             result = tool.handler(**arguments)
-            self._audit(name, None, "success" if getattr(result, "success", True) else "failed")
+            if not tool.audits_transactionally:
+                self._audit(name, None, "success" if getattr(result, "success", True) else "failed")
             return result
         except Exception:
             self._audit(name, None, "error")
@@ -88,9 +90,9 @@ def calculator(expression):
 def create_registry(store, context, command_engine):
     from personal_context import read_document
     registry = ToolRegistry(store.audit)
-    def add(name, description, level, properties, required, handler):
+    def add(name, description, level, properties, required, handler, *, audits_transactionally=False):
         registry.register(ToolDefinition(name, description, {"type": "object", "properties": properties,
-            "required": required, "additionalProperties": False}, level, handler))
+            "required": required, "additionalProperties": False}, level, handler, audits_transactionally))
     string = {"type": "string"}
     add("get_current_time", "读取当前时间", 0, {}, [], lambda: datetime.now().astimezone().isoformat())
     add("calculator", "计算", 0, {"expression": string}, ["expression"], calculator)
@@ -98,8 +100,14 @@ def create_registry(store, context, command_engine):
     add("search_knowledge", "搜索个人资料", 0, {"query": string}, ["query"], context.search)
     add("read_memories", "读取用户明确保存的记忆", 0, {}, [], context.memories)
     add("create_task", "添加已确认事项", 1, {"draft": {"type": "object"}}, ["draft"], lambda draft: store.confirm_drafts([draft]))
+    add("confirm_tasks", "保存已确认的事项和提醒，供灵动岛显示", 1,
+        {"drafts": {"type": "array", "items": {"type": "object"}}}, ["drafts"], store.confirm_drafts,
+        audits_transactionally=True)
     add("update_task", "修改事项", 1, {"task_id": string, "changes": {"type": "object"}}, ["task_id", "changes"], store.update_task)
-    add("complete_task", "完成事项", 1, {"task_id": string}, ["task_id"], store.complete_task)
+    add("complete_task", "完成事项", 1, {"task_id": string}, ["task_id"], store.complete_task,
+        audits_transactionally=True)
+    add("reopen_task", "取消事项完成状态", 1, {"task_id": string}, ["task_id"], store.reopen_task,
+        audits_transactionally=True)
     def reminder(task_id, trigger_at):
         task = store.get_task(task_id)
         if task is None:

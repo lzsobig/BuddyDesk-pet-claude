@@ -268,6 +268,7 @@ class BuddyDeskApp:
             return
         if self._settings_dialog is not None:
             self._settings_dialog._select_settings_page(page)
+            self._settings_dialog.showNormal()
             self._settings_dialog.raise_()
             self._settings_dialog.activateWindow()
             return
@@ -275,10 +276,15 @@ class BuddyDeskApp:
         self._settings_dialog = dlg
         dlg._select_settings_page(page)
         dlg.saved.connect(self._on_settings_saved)
-        try:
-            dlg.exec()
-        finally:
-            self._settings_dialog = None
+        def finished(_result):
+            if self._settings_dialog is dlg:
+                self._settings_dialog = None
+            dlg.deleteLater()
+        dlg.finished.connect(finished)
+        dlg.setModal(False)
+        dlg.showNormal()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _on_settings_saved(self, new_config: dict):
         """Apply new config from settings panel."""

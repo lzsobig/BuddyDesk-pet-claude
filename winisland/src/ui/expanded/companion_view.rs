@@ -42,7 +42,7 @@ fn layout(rect: Rect, scale: f32) -> CompanionLayout {
     let inset = 24.0 * scale;
     let inner = Rect::from_xywh(
         rect.left + inset,
-        rect.top + 20.0 * scale,
+        rect.top + 16.0 * scale,
         (rect.width() - inset * 2.0).max(1.0),
         (rect.height() - 40.0 * scale).max(1.0),
     );

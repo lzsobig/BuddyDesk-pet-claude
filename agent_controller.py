@@ -81,11 +81,15 @@ class AgentController(QObject):
         self.draft_dialog = None
         self.clarification_dialog = None
         self.tasks_dialog = None
+        self._task_details = {}
+        self._task_editors = {}
         self.reminder_card = None
         self._active_reminder = None
         self._request = 0
         self._file_request = 0
         self._tools_running = 0
+        self._tools_failed = False
+        self._tools_chat_request = 0
         self._backend = None
         self._supplement = ""
         self._transcript = ""
@@ -182,7 +186,7 @@ class AgentController(QObject):
         if self.main._user_config.get("agent_voice_provider", "local") == "doubao":
             self.ime.start()
             return
-        self.state.set("listening", "我在听 · 再按快捷键结束，Esc 取消", "")
+        self.state.set("listening", "我在听 · 再按快捷键结束，Esc 取消", "", source="voice")
         if not self.voice.start():
             self.fail("未能开始录音，请检查麦克风和设置 → 语音。")
 
@@ -196,7 +200,7 @@ class AgentController(QObject):
 
     def _ime_state(self, state):
         label = {"listening": "豆包语音输入", "transcribing": "正在接收豆包文字"}.get(state, "")
-        self.state.set(state, label, "" if state == "idle" else None)
+        self.state.set(state, label, "" if state == "idle" else None, source="voice")
 
     def _escape(self):
         import sys
@@ -239,7 +243,7 @@ class AgentController(QObject):
         self._transcript = text[:12000]
         if self.draft_dialog:
             self.draft_dialog.hide()
-        self.state.set("understanding", "正在整理你的安排", self._transcript)
+        self.state.set("understanding", "正在整理你的安排", self._transcript, source="tasks")
         settings = dict(self.main._user_config)
 
         def worker():
@@ -324,15 +328,16 @@ class AgentController(QObject):
 
     def confirm(self, drafts):
         try:
-            self.state.set("executing", "正在保存事项与提醒")
-            self.store.confirm_drafts(drafts)
+            self._restore_at = 0
+            self.state.set("executing", "正在保存事项与提醒", source="tasks")
+            self.tools.execute("confirm_tasks", {"drafts": drafts}, authorized=True)
             self._reveal_id = uuid4().hex
             self._reveal_at_ms = int(time.time() * 1000)
             if self.draft_dialog:
                 self.draft_dialog.accept()
                 self.draft_dialog = None
-            self.state.set("success", f"已加入灵动岛 · {len(drafts)} 件事")
-            self._restore_at = time.monotonic() + 2
+            self.state.set("success", f"已保存 {len(drafts)} 件事 · 在屏幕顶部灵动岛查看", "")
+            self._restore_at = time.monotonic() + 4
             self.publish(force=True)
         except (ValueError, OSError, sqlite3.Error) as error:
             self.state.set("asking_confirmation", "未能保存，请重试")
@@ -371,16 +376,19 @@ class AgentController(QObject):
         if self._active_reminder or self._tools_running:
             return
         if self.state.state not in ("listening", "transcribing", "understanding", "asking_confirmation", "executing"):
-            self.state.set(state if state in self.state.STATES else "idle", preview)
-            if state in ("success", "error"):
-                self._restore_at = time.monotonic() + 3
+            self._restore_at = time.monotonic() + 3 if state in ("success", "error") else 0
+            self.state.set(state if state in self.state.STATES else "idle", preview, "", source="chat")
 
     def _present(self, snapshot):
         state, label = snapshot["state"], snapshot["label"]
         self.hotkeys.set_cancel_active(state in ("listening", "transcribing", "understanding"))
         self.overlay.external_input_active = self.ime.active
-        self.overlay.present(state, label, snapshot["transcript"], snapshot["level"],
-                             bool(self.main._user_config.get("agent_reduced_motion", False)))
+        if snapshot["source"] in ("voice", "tasks", "files") and state not in (
+                "idle", "asking_confirmation", "reminding"):
+            self.overlay.present(state, label, snapshot["transcript"], snapshot["level"],
+                                 bool(self.main._user_config.get("agent_reduced_motion", False)))
+        else:
+            self.overlay.dismiss()
         pet_state = {"listening": "listening", "transcribing": "thinking", "understanding": "thinking",
             "thinking": "thinking", "executing": "thinking", "asking_confirmation": "listening",
             "reminding": "reminding", "success": "happy", "error": "error"}.get(state, "idle")
@@ -428,7 +436,7 @@ class AgentController(QObject):
                 self.store.mark_reminder_firing(reminders[0]["id"])
                 self._active_reminder = reminders[0]
                 self._restore_at = 0
-                self.state.set("reminding", reminders[0].get("title", "到提醒时间了"))
+                self.state.set("reminding", reminders[0].get("title", "到提醒时间了"), "", source="reminder")
                 self.reminder_card = ReminderCard(reminders[0])
                 self.reminder_card.completed.connect(lambda identity: self._guard(self.complete_task, identity))
                 self.reminder_card.snoozed.connect(lambda identity, minutes: self._guard(self.snooze, identity, minutes))
@@ -453,9 +461,41 @@ class AgentController(QObject):
         if self._active_reminder and self._active_reminder["task_id"] == task_id:
             self._close_reminder()
         self.publish(force=True)
+        if task_id in self._task_details:
+            self._task_details[task_id].set_completed(True)
+        if self.tasks_dialog and self.tasks_dialog.isVisible():
+            self.tasks_dialog.update_task(result)
+        return result
+
+    def reopen_task(self, task_id):
+        result = self.store.reopen_task(task_id)
+        self.publish(force=True)
+        if task_id in self._task_details:
+            self._task_details[task_id].set_completed(False)
+        if self.tasks_dialog and self.tasks_dialog.isVisible():
+            self.tasks_dialog.update_task(result)
+        return result
+
+    def set_task_completed(self, task_id, completed):
+        return self.complete_task(task_id) if completed else self.reopen_task(task_id)
+
+    def delete_task(self, task_id):
+        parent = self._task_details.get(task_id) or self.tasks_dialog
+        if QMessageBox.question(parent, "删除事项", "删除这件事项及其提醒？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        if not self._guard(self.store.delete_task, task_id):
+            return
+        if self._active_reminder and self._active_reminder["task_id"] == task_id:
+            self._close_reminder()
+        for windows in (self._task_details, self._task_editors):
+            dialog = windows.get(task_id)
+            if dialog is not None:
+                dialog.close()
+        self.publish(force=True)
         if self.tasks_dialog and self.tasks_dialog.isVisible():
             self.open_tasks()
-        return result
 
     def snooze(self, reminder_id, minutes):
         self.store.snooze_reminder(reminder_id, minutes)
@@ -470,21 +510,30 @@ class AgentController(QObject):
     def open_tasks(self):
         if self.tasks_dialog:
             self.tasks_dialog.close()
-        self.tasks_dialog = TasksDialog(self.store.list_tasks())
-        self.tasks_dialog.completed.connect(lambda identity: self._guard(self.complete_task, identity))
+            self.tasks_dialog.deleteLater()
+        self.tasks_dialog = TasksDialog(self.store.list_tasks(include_done=True))
+        self.tasks_dialog.completed.connect(lambda identity, completed: self._guard(self.set_task_completed, identity, completed))
         self.tasks_dialog.detail.connect(self.open_detail)
         self.tasks_dialog.add_requested.connect(self.toggle_voice)
         self.tasks_dialog.show()
 
     def open_detail(self, task_id):
+        existing = self._task_details.get(task_id)
+        if existing is not None:
+            existing.showNormal()
+            existing.raise_()
+            existing.activateWindow()
+            return
         task = self.store.get_task(task_id)
         if not task:
             return
         detail = TaskDetail(task)
         def complete():
-            if self._guard(self.complete_task, task_id):
-                detail.accept()
+            current = self.store.get_task(task_id)
+            if current:
+                self._guard(self.set_task_completed, task_id, current["status"] != "done")
         detail.completed.connect(complete)
+        detail.deleted.connect(lambda: self.delete_task(task_id))
         def later(minutes):
             result = self._guard(self.store.create_reminder, task_id, (datetime.now().astimezone() + timedelta(minutes=minutes)).isoformat())
             if result:
@@ -492,9 +541,28 @@ class AgentController(QObject):
                 self.publish(force=True)
         detail.later.connect(later)
         detail.edit.connect(lambda: (detail.accept(), self.edit_task(task_id)))
-        detail.exec()
+        self._show_task_window(self._task_details, task_id, detail)
+
+    @staticmethod
+    def _show_task_window(windows, task_id, dialog):
+        windows[task_id] = dialog
+        def finished(_result):
+            if windows.get(task_id) is dialog:
+                windows.pop(task_id)
+            dialog.deleteLater()
+        dialog.finished.connect(finished)
+        dialog.setModal(False)
+        dialog.showNormal()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def edit_task(self, task_id):
+        existing = self._task_editors.get(task_id)
+        if existing is not None:
+            existing.showNormal()
+            existing.raise_()
+            existing.activateWindow()
+            return
         task = self.store.get_task(task_id)
         if not task:
             return
@@ -508,7 +576,7 @@ class AgentController(QObject):
             except (ValueError, OSError) as error:
                 QMessageBox.warning(dialog, "未能保存", str(error))
         dialog.confirmed.connect(save)
-        dialog.exec()
+        self._show_task_window(self._task_editors, task_id, dialog)
 
     def handle_command(self, command):
         self._guard(self._handle_command, command)
@@ -527,6 +595,8 @@ class AgentController(QObject):
             self.open_tasks()
         elif action == "task_complete":
             self.complete_task(str(command.get("task_id", "")))
+        elif action == "task_reopen":
+            self.reopen_task(str(command.get("task_id", "")))
         elif action == "task_detail":
             self.open_detail(str(command.get("task_id", "")))
         elif action == "reminder_snooze":
@@ -554,8 +624,13 @@ class AgentController(QObject):
             approved.append((name, {parameter: value.strip()}, value.strip()))
         if not approved:
             return
+        if not self._tools_running:
+            self._tools_failed = False
         self._tools_running += len(approved)
-        self.state.set("executing", "正在执行你确认的操作")
+        self._tools_chat_request = self.main.bridge._request_counter
+        if self.state.source not in ("voice", "tasks", "files", "reminder") or self.state.state == "idle":
+            self._restore_at = 0
+            self.state.set("executing", "", "", source="tool")
         registry = self.tools
         def worker():
             for tool, args, label in approved:
@@ -567,9 +642,23 @@ class AgentController(QObject):
         threading.Thread(target=worker, daemon=True).start()
 
     def tool_finished(self, success):
-        self._tools_running = max(0, self._tools_running - 1)
         if not self._tools_running:
-            self.chat_state("result" if success else "error", "操作已完成" if success else "操作没有完成")
+            return
+        self._tools_failed = self._tools_failed or not success
+        self._tools_running = max(0, self._tools_running - 1)
+        if not self._tools_running and self.state.source == "tool":
+            if self.main.bridge._request_counter != self._tools_chat_request:
+                state, label = self._last_chat_state
+                self._restore_at = time.monotonic() + 3 if state in ("success", "error") else 0
+                self.state.set(state if state in self.state.STATES else "idle", label, "", source="chat")
+                return
+            if self.main.chat and self.main.chat._streaming and self._last_chat_state[0] == "thinking":
+                self._restore_at = 0
+                self.state.set("thinking", self._last_chat_state[1], "", source="chat")
+                return
+            self._restore_at = time.monotonic() + 3
+            self.state.set("error" if self._tools_failed else "success",
+                           "部分操作没有完成" if self._tools_failed else "操作已完成", "", source="tool")
 
     def files_dropped(self, paths):
         if self.voice.recording or self.voice.processing:
@@ -591,7 +680,7 @@ class AgentController(QObject):
             question, ok = QInputDialog.getText(None, "文件提问", "希望我做什么？")
             if not ok:
                 return
-        self.state.set("understanding", "正在阅读文件")
+        self.state.set("understanding", "正在阅读文件", "", source="files")
         self._restore_at = 0.0
         self._file_request += 1
         request = self._file_request
@@ -642,6 +731,7 @@ class AgentController(QObject):
                 self.main.chat._sys("文件已临时读取，下一次提问会使用这些内容；没有加入知识库。")
                 self.state.set("idle", "")
             else:
+                self.state.set("idle", "", "")
                 self.main.chat._send_text(question or "请总结刚刚提供的文件，并标注文件名与页码。")
 
     def search_knowledge(self):
@@ -688,6 +778,8 @@ class AgentController(QObject):
 
     def close(self):
         self.cancel()
+        for dialog in [*self._task_details.values(), *self._task_editors.values()]:
+            dialog.close()
         self.hotkeys.close()
         self._timer.stop()
         self._escape_timer.stop()

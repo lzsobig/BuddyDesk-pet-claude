@@ -228,7 +228,7 @@ impl App {
                     point,
                 ) {
                     let command = match hit {
-                        TodayHit::Complete(index) => self.agent.snapshot().and_then(|snapshot| snapshot.tasks.get(index)).map(|task| ("task_complete", serde_json::json!({"task_id": task.id}))),
+                        TodayHit::Complete(index) => self.agent.snapshot().and_then(|snapshot| snapshot.tasks.get(index)).map(|task| (if task.status == crate::core::agent::TaskStatus::Done { "task_reopen" } else { "task_complete" }, serde_json::json!({"task_id": task.id}))),
                         TodayHit::Detail(index) => self.agent.snapshot().and_then(|snapshot| snapshot.tasks.get(index)).map(|task| ("task_detail", serde_json::json!({"task_id": task.id}))),
                         TodayHit::More => Some(("open_tasks", serde_json::json!({}))),
                         TodayHit::ReminderComplete => self.agent.snapshot().map(|snapshot| ("reminder_complete", serde_json::json!({"reminder_id": snapshot.reminder_id}))),

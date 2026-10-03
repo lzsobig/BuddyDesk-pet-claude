@@ -250,7 +250,7 @@ class WinIslandBridge(QObject):
             if age > 120_000 or age < -5_000:
                 return
             action = command.get("action")
-            agent_actions = ("open_tasks", "task_complete", "task_detail", "reminder_snooze", "reminder_complete", "reminder_dismiss")
+            agent_actions = ("open_tasks", "task_complete", "task_reopen", "task_detail", "reminder_snooze", "reminder_complete", "reminder_dismiss")
             if action not in ("open_chat", "open_settings", "pet_state", *agent_actions):
                 return
             if action == "pet_state" and (
@@ -322,7 +322,7 @@ class WinIslandBridge(QObject):
                     valid = (command.get("protocol_version") == 1 and isinstance(identity, str)
                         and 0 < len(identity) <= 128 and type(issued) is int
                         and -5000 <= int(time.time() * 1000) - issued <= 120000
-                        and command.get("action") in ("open_tasks", "task_complete", "task_detail", "reminder_snooze", "reminder_complete", "reminder_dismiss"))
+                        and command.get("action") in ("open_tasks", "task_complete", "task_reopen", "task_detail", "reminder_snooze", "reminder_complete", "reminder_dismiss"))
                     if valid and identity not in self._seen_ids:
                         self.main_app.agent.handle_command(command)
                         self._seen_ids.append(identity)

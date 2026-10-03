@@ -813,7 +813,9 @@ class TaskStore:
                     "SELECT * FROM tasks WHERE status = 'pending'"
                 ).fetchall()
         tasks = [_row_to_task(row) for row in rows]
-        return _dependency_order(sorted(tasks, key=_task_sort_key))
+        ordered = sorted(tasks, key=_task_sort_key)
+        return (_dependency_order([task for task in ordered if task["status"] == "pending"])
+                + [task for task in ordered if task["status"] == "done"])
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         identifier = _identifier(task_id, "id")
@@ -933,16 +935,57 @@ class TaskStore:
                     "WHERE id = ?",
                     (completed_at, completed_at, identifier),
                 )
-                connection.execute(
-                    "UPDATE reminders SET status = 'dismissed', updated_at = ? "
-                    "WHERE task_id = ? AND status IN ('pending', 'firing')",
-                    (completed_at, identifier),
-                )
                 self._audit_conn(connection, "task.complete", identifier, "completed")
             completed = connection.execute(
                 "SELECT * FROM tasks WHERE id = ?", (identifier,)
             ).fetchone()
             return _row_to_task(completed)
+
+    def reopen_task(self, task_id: str) -> dict[str, Any]:
+        identifier = _identifier(task_id, "id")
+        with self._transaction() as connection:
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (identifier,)).fetchone()
+            if row is None:
+                raise TaskNotFoundError(f"找不到事项 {identifier}")
+            if row["status"] == "done":
+                current_time = _utc_now()
+                now = _iso_utc(current_time)
+                expired = connection.execute(
+                    "SELECT * FROM reminders WHERE task_id = ? "
+                    "AND status IN ('pending', 'firing') AND trigger_at <= ?",
+                    (identifier, now),
+                ).fetchall()
+                connection.execute(
+                    "UPDATE tasks SET status = 'pending', completed_at = NULL, updated_at = ? WHERE id = ?",
+                    (now, identifier),
+                )
+                connection.execute(
+                    "UPDATE reminders SET status = 'dismissed', updated_at = ? "
+                    "WHERE task_id = ? AND status IN ('pending', 'firing') AND trigger_at <= ?",
+                    (now, identifier, now),
+                )
+                for reminder in expired:
+                    if reminder["repeat_rule"] != "none":
+                        self._queue_next_occurrence(connection, reminder, current_time)
+                self._audit_conn(connection, "task.reopen", identifier, "reopened")
+            return _row_to_task(connection.execute("SELECT * FROM tasks WHERE id = ?", (identifier,)).fetchone())
+
+    def delete_task(self, task_id: str) -> bool:
+        identifier = _identifier(task_id, "id")
+        with self._transaction() as connection:
+            if connection.execute("SELECT id FROM tasks WHERE id = ?", (identifier,)).fetchone() is None:
+                return False
+            now = _iso_utc(_utc_now())
+            for row in connection.execute("SELECT id, dependencies FROM tasks WHERE id != ?", (identifier,)).fetchall():
+                dependencies = json.loads(row["dependencies"])
+                if identifier in dependencies:
+                    connection.execute(
+                        "UPDATE tasks SET dependencies = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps([value for value in dependencies if value != identifier]), now, row["id"]),
+                    )
+            connection.execute("DELETE FROM tasks WHERE id = ?", (identifier,))
+            self._audit_conn(connection, "task.delete", identifier, "deleted")
+            return True
 
     def create_reminder(
         self,
@@ -1110,40 +1153,28 @@ class TaskStore:
                 (new_status, updated_at, identifier),
             )
             if new_status == "done" and row["repeat_rule"] != "none":
-                next_at, index_increment = self._next_occurrence(
-                    row["scheduled_at"], row["repeat_rule"], now
-                )
-                next_index = row["series_index"] + index_increment
-                next_id = uuid.uuid5(
-                    uuid.NAMESPACE_URL, f"{row['series_id']}:{next_at}"
-                ).hex
-                connection.execute(
-                    """INSERT OR IGNORE INTO reminders(
-                        id, task_id, trigger_at, status, repeat_rule, scheduled_at,
-                        series_id, series_index, is_initial, created_at, updated_at
-                    ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, 0, ?, ?)""",
-                    (
-                        next_id,
-                        row["task_id"],
-                        next_at,
-                        row["repeat_rule"],
-                        next_at,
-                        row["series_id"],
-                        next_index,
-                        updated_at,
-                        updated_at,
-                    ),
-                )
+                self._queue_next_occurrence(connection, row, now)
             self._audit_conn(connection, "reminder.dismiss", identifier, new_status)
             updated = self._fetch_reminder(connection, identifier)
             return _row_to_reminder(updated)
 
+    def _queue_next_occurrence(self, connection, row, now):
+        next_at, increment = self._next_occurrence(row["scheduled_at"], row["repeat_rule"], now)
+        next_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{row['series_id']}:{next_at}").hex
+        updated_at = _iso_utc(now)
+        connection.execute(
+            """INSERT OR IGNORE INTO reminders(
+                id, task_id, trigger_at, status, repeat_rule, scheduled_at,
+                series_id, series_index, is_initial, created_at, updated_at
+            ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, 0, ?, ?)""",
+            (next_id, row["task_id"], next_at, row["repeat_rule"], next_at,
+             row["series_id"], row["series_index"] + increment, updated_at, updated_at),
+        )
+
     def snapshot(self) -> dict[str, Any]:
         now = _utc_now()
         with self._connection() as connection:
-            rows = connection.execute(
-                "SELECT * FROM tasks WHERE status = 'pending'"
-            ).fetchall()
+            rows = connection.execute("SELECT * FROM tasks").fetchall()
             local_today = datetime.now().astimezone().date()
             local_start = datetime.combine(local_today, time.min).astimezone(timezone.utc)
             local_end = datetime.combine(
@@ -1169,11 +1200,15 @@ class TaskStore:
                 reminder["trigger_at"]
             )
         def relevance(task):
-            times = [value for value in [task["due_at"], *(reminders_by_task.get(task["id"]) or [])] if value]
+            reminder_times = reminders_by_task.get(task["id"]) or (
+                task["reminder_times"] if task["status"] == "done" else [])
+            times = [value for value in [task["due_at"], *reminder_times] if value]
             nearest = min(times) if times else None
             today = nearest is not None and _parse_datetime(nearest, "time").astimezone().date() <= local_today
             return (not today, task["priority"], nearest or "9999", task["created_at"], task["id"])
-        tasks = _dependency_order(sorted((_row_to_task(row) for row in rows), key=relevance))
+        ordered = sorted((_row_to_task(row) for row in rows), key=relevance)
+        tasks = (_dependency_order([task for task in ordered if task["status"] == "pending"])
+                 + [task for task in ordered if task["status"] == "done"])
         snapshot_tasks = [
             {
                 "id": task["id"],
