@@ -6,6 +6,7 @@ mod audio;
 mod backdrop;
 mod com;
 mod display;
+mod file;
 mod input;
 mod media;
 mod metrics;
@@ -16,6 +17,7 @@ pub mod window;
 
 pub use audio::WindowsAudio;
 pub use display::WindowsDisplay;
+pub use file::replace_file;
 pub use input::WindowsInput;
 pub use media::WindowsMedia;
 pub use metrics::WindowsMetrics;

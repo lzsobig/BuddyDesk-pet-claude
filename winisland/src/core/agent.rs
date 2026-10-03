@@ -12,6 +12,117 @@ const HEARTBEAT_TIMEOUT_MS: u64 = 6_000;
 const REVEAL_WINDOW_MS: u64 = 5_000;
 const MAX_SEEN_REVEAL_IDS: usize = 128;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const INPUT_SURFACE_ACTIVE_INTERVAL: Duration = Duration::from_millis(100);
+const INPUT_SURFACE_IDLE_INTERVAL: Duration = Duration::from_secs(1);
+const INPUT_SURFACE_ERROR_INTERVAL: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct InputSurfaceRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Serialize)]
+struct InputSurface<'a> {
+    protocol_version: u32,
+    pid: u32,
+    updated_at_ms: u64,
+    input_session: &'a str,
+    active: bool,
+    ready: bool,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    dpi: f64,
+}
+
+#[derive(Default)]
+pub struct InputSurfacePublisher {
+    path: Option<PathBuf>,
+    last_publish: Option<Instant>,
+    last_error_log: Option<Instant>,
+    last_session: String,
+    last_active: bool,
+    last_ready: bool,
+}
+
+impl InputSurfacePublisher {
+    pub fn new() -> Self {
+        Self {
+            path: dirs::home_dir().map(|home| {
+                home.join(".buddydesk")
+                    .join("winisland")
+                    .join("input-surface.json")
+            }),
+            ..Self::default()
+        }
+    }
+
+    pub fn publish(
+        &mut self,
+        now: Instant,
+        input_session: &str,
+        ready: bool,
+        rect: InputSurfaceRect,
+        dpi: f64,
+    ) {
+        let active = !input_session.is_empty();
+        let interval = if active {
+            INPUT_SURFACE_ACTIVE_INTERVAL
+        } else {
+            INPUT_SURFACE_IDLE_INTERVAL
+        };
+        if self.last_session == input_session
+            && self.last_active == active
+            && self.last_ready == ready
+            && self
+                .last_publish
+                .is_some_and(|last| now.duration_since(last) < interval)
+        {
+            return;
+        }
+        self.last_publish = Some(now);
+        self.last_session.clear();
+        self.last_session.push_str(input_session);
+        self.last_active = active;
+        self.last_ready = ready;
+        let Some(path) = self.path.as_ref() else {
+            return;
+        };
+        let surface = InputSurface {
+            protocol_version: 1,
+            pid: std::process::id(),
+            updated_at_ms: epoch_ms(),
+            input_session,
+            active,
+            ready: active && ready,
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            dpi,
+        };
+        let result = (|| -> Result<(), String> {
+            let directory = path.parent().ok_or("Input surface directory unavailable")?;
+            fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+            let temp = directory.join(format!("input-surface-{}.tmp", std::process::id()));
+            let bytes = serde_json::to_vec(&surface).map_err(|error| error.to_string())?;
+            fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+            winisland_platform_windows::replace_file(&temp, path)
+        })();
+        if let Err(error) = result
+            && self
+                .last_error_log
+                .is_none_or(|last| now.duration_since(last) >= INPUT_SURFACE_ERROR_INTERVAL)
+        {
+            log::warn!("Input surface publish failed: {error}");
+            self.last_error_log = Some(now);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +175,7 @@ pub struct AgentSnapshot {
     pub reminder_task_id: Option<String>,
     pub reveal_id: String,
     pub reveal_at_ms: u64,
+    pub input_session: String,
 }
 
 #[derive(Default)]
@@ -121,6 +233,7 @@ impl AgentSnapshot {
             && self.reminder_task_id == other.reminder_task_id
             && self.reveal_id == other.reveal_id
             && self.reveal_at_ms == other.reveal_at_ms
+            && self.input_session == other.input_session
             && self
                 .tasks
                 .iter()
@@ -222,6 +335,13 @@ impl AgentBridge {
         self.connected
     }
 
+    pub fn input_session(&self) -> &str {
+        self.snapshot
+            .as_ref()
+            .filter(|_| self.connected)
+            .map_or("", |snapshot| snapshot.input_session.as_str())
+    }
+
     pub fn send_command(&self, action: &str, args: serde_json::Value) -> Result<(), String> {
         let path = self.path.as_ref().ok_or("Agent directory unavailable")?;
         let directory = path.parent().ok_or("Agent directory unavailable")?;
@@ -274,6 +394,7 @@ fn read_snapshot(path: &PathBuf) -> Result<AgentSnapshot, String> {
     snapshot.next_reminder = clean_text(&snapshot.next_reminder, 120);
     snapshot.reminder_id = clean_text(&snapshot.reminder_id, 128);
     snapshot.reveal_id = clean_text(&snapshot.reveal_id, 128);
+    snapshot.input_session = clean_text(&snapshot.input_session, 128);
     snapshot.reminder_task_id = snapshot
         .reminder_task_id
         .as_deref()

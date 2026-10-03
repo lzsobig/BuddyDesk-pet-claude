@@ -103,6 +103,9 @@ def create_registry(store, context, command_engine):
     add("confirm_tasks", "保存已确认的事项和提醒，供灵动岛显示", 1,
         {"drafts": {"type": "array", "items": {"type": "object"}}}, ["drafts"], store.confirm_drafts,
         audits_transactionally=True)
+    add("apply_task_plan", "执行用户确认的事项调整，可能包括删除", 3,
+        {"drafts": {"type": "array"}, "actions": {"type": "array"}}, ["drafts", "actions"],
+        store.apply_plan, audits_transactionally=True)
     add("update_task", "修改事项", 1, {"task_id": string, "changes": {"type": "object"}}, ["task_id", "changes"], store.update_task)
     add("complete_task", "完成事项", 1, {"task_id": string}, ["task_id"], store.complete_task,
         audits_transactionally=True)

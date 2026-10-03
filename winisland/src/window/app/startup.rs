@@ -29,6 +29,12 @@ impl App {
             };
             let window_ref = WindowRef(id);
             self.window = Some(window_ref);
+            let dpi_size = self.required_window_size();
+            if dpi_size != window_size {
+                let _ = window_ref.request_inner_size(dpi_size);
+                self.geom.os_w = dpi_size.width;
+                self.geom.os_h = dpi_size.height;
+            }
             log::info!(
                 "Window created: {}x{} (base {}x{})",
                 self.geom.os_w,

@@ -68,10 +68,23 @@ def active_model_dir(directory: Path) -> Path:
 
 def has_model(directory: Path) -> bool:
     directory = active_model_dir(directory)
+    return model_directory_problem(directory) is None
+
+
+def model_directory_problem(directory: Path) -> str | None:
+    directory = active_model_dir(directory)
     try:
-        return (directory / "model.onnx").stat().st_size > 1_000_000 and (directory / "tokens.json").stat().st_size > 1000
-    except OSError:
-        return False
+        model = directory / "model.onnx"
+        tokens_path = directory / "tokens.json"
+        if model.stat().st_size <= 1_000_000 or not 1_000 < tokens_path.stat().st_size < 2_000_000:
+            return "目录需要 SenseVoice-Small ONNX 的 model.onnx 和 tokens.json"
+        with tokens_path.open(encoding="utf-8") as stream:
+            tokens = json.load(stream)
+        if not isinstance(tokens, list) or len(tokens) != 25055 or not all(isinstance(item, str) for item in tokens):
+            return "词表不是 SenseVoice-Small ONNX 格式；普通 Whisper 模型不能导入这里"
+    except (OSError, ValueError, UnicodeError, TypeError):
+        return "目录需要 SenseVoice-Small ONNX 的 model.onnx 和 tokens.json"
+    return None
 
 
 def find_model_dir(settings: dict | None = None) -> Path | None:
@@ -103,6 +116,8 @@ def validate_cloud_config(settings: dict) -> str:
         raise ValueError("请输入完整的语音 API 基础地址，例如 https://api.openai.com/v1")
     if parsed.scheme != "https" and not local:
         raise ValueError("远程语音服务请使用 HTTPS 地址")
+    if parsed.path.rstrip("/").endswith("/audio/transcriptions"):
+        raise ValueError("请填写 API 基础地址；程序会自动调用 /audio/transcriptions")
     if not local and not str(settings.get("voice_api_key", "")).strip():
         raise ValueError("请填写语音服务的 API Key")
     if not str(settings.get("voice_api_model", "")).strip():

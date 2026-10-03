@@ -643,10 +643,10 @@ class ThinkingSpinner(QWidget):
 
 
 class _TypingBubble(QFrame):
-    def __init__(self):
+    def __init__(self, progress: str = "正在连接"):
         super().__init__()
         self._started = time.monotonic()
-        self._progress = ""
+        self._progress = progress
         self.setStyleSheet("background:transparent;border:none;")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 8)
@@ -659,17 +659,29 @@ class _TypingBubble(QFrame):
         self._timer = QTimer(self)
         self._timer.setInterval(250)
         self._timer.timeout.connect(self._refresh)
-        self._timer.start()
         self._refresh()
 
-    def set_progress(self, label):
-        self._progress = label if label in {"正在准备", "正在思考", "正在生成回答", "正在使用工具", "正在连接"} else ""
+    def set_progress(self, label, *, trusted=False):
+        allowed = {"正在准备", "正在思考", "正在生成回答", "正在使用工具", "正在连接",
+                   "正在读取文件", "正在读取文件夹", "正在读取文件或文件夹", "正在理解文件内容", "正在处理"}
+        if trusted and isinstance(label, str) and label.strip():
+            self._progress = label.strip().replace("\n", " ")[:80]
+        elif label in allowed:
+            self._progress = label
         self._refresh()
 
     def _refresh(self):
         seconds = int(time.monotonic() - self._started)
-        label = self._progress or ("思考中" if (seconds // 5) % 2 == 0 else "正在琢磨")
-        self._label.setText(f"{label} · {seconds} 秒")
+        self._label.setText(f"{self._progress} · {seconds} 秒")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._timer.start()
+        self._refresh()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
 
 
 class _CommandResult(QFrame):
@@ -678,23 +690,38 @@ class _CommandResult(QFrame):
         self.setStyleSheet("background:transparent;border:none;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 4)
-        message = output.strip() or ("操作已完成" if ok else "操作没有完成，请检查设置后重试。")
-        summary = QLabel(message[:240])
+        message = output.strip()
+        lines = [line.strip() for line in message.splitlines() if line.strip()]
+        if ok and len(lines) == 1 and len(lines[0]) <= 120 and lines[0].startswith(
+                ("已打开", "已启动", "已创建", "已保存", "已完成", "已添加", "已关闭")):
+            summary_text = lines[0]
+        elif ok:
+            summary_text = "操作已完成" if not message else "操作已完成 · 可查看输出"
+        elif len(lines) == 1 and len(lines[0]) <= 120:
+            summary_text = lines[0]
+        else:
+            summary_text = "操作没有完成 · 可查看详情"
+        summary = QLabel(summary_text)
         summary.setTextFormat(Qt.TextFormat.PlainText)
         summary.setWordWrap(True)
         summary.setStyleSheet(f"color:{TEXT_MUTED if ok else RED};font-size:12px;background:transparent;")
         layout.addWidget(summary)
-        if cmd or len(message) > 240:
+        if cmd or message and message != summary_text:
             details = QPushButton("查看详情")
             details.setFixedHeight(24)
             details.setStyleSheet(f"text-align:left;padding:0;color:{TEXT_MUTED};background:transparent;border:none;font-size:11px;")
             details.setCheckable(True)
-            body = QLabel(f"{cmd}\n{message}")
-            body.setTextFormat(Qt.TextFormat.PlainText)
-            body.setWordWrap(True)
-            body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            body.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;background:transparent;")
+            body = QPlainTextEdit()
+            body.setReadOnly(True)
+            body.setPlainText("\n".join(part for part in (cmd, message) if part))
+            body.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+            body.setMaximumHeight(150)
+            body.setMinimumHeight(64)
+            body.setStyleSheet(f"QPlainTextEdit {{color:{TEXT_SECONDARY};font-size:11px;"
+                               f"background:{BG_CARD};border:1px solid {BORDER_SUBTLE};"
+                               f"border-radius:7px;padding:7px;font-family:{FONT_MONO};}}")
             body.hide()
+            details.toggled.connect(lambda expanded: details.setText("收起详情" if expanded else "查看详情"))
             details.toggled.connect(body.setVisible)
             layout.addWidget(details)
             layout.addWidget(body)

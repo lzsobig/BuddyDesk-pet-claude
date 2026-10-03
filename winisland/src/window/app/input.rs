@@ -30,6 +30,9 @@ impl App {
         py: i32,
         source: InputSource,
     ) {
+        if !self.agent.input_session().is_empty() {
+            return;
+        }
         let fullscreen_suppressed = self.fullscreen_hide_active() && !self.hide.overlay_reveal;
         if fullscreen_suppressed || (source == InputSource::Mouse && self.is_cursor_suppressed) {
             return;
@@ -48,6 +51,9 @@ impl App {
     }
 
     pub(super) fn handle_right_input(&mut self, state: InputState, px: i32, py: i32) {
+        if !self.agent.input_session().is_empty() {
+            return;
+        }
         if self.expanded && self.page_focused(ExpandedPage::Companion) && !self.is_cursor_suppressed
         {
             let layout = self.compute_island_layout();

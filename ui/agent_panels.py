@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QDateTime, QDate, QTime, QTimer, QSize, QPoint
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QPlainTextEdit, QLineEdit, QListWidget, QListWidgetItem, QInputDialog,
-    QFrame, QScrollArea, QWidget, QAbstractItemView)
+    QFrame, QScrollArea, QWidget, QAbstractItemView, QComboBox)
 
 
 def display_time(value):
@@ -312,19 +314,129 @@ class TimeField(QWidget):
         self.valueChanged.emit()
 
 
+def describe_action(action):
+    labels = {"delete": "删除事项", "complete": "标记完成", "reopen": "取消完成", "update": "调整事项"}
+    lines = [labels[action["type"]] + " · " + action["title"]]
+    changes = action.get("changes", {})
+    if "title" in changes:
+        lines.append("名称改为：" + changes["title"])
+    if "due_at" in changes:
+        lines.append("截止：" + (display_time(changes["due_at"]) if changes["due_at"] else "移除截止时间"))
+    if "reminder_times" in changes:
+        lines.append("提醒：" + ("、".join(display_time(value) for value in changes["reminder_times"]) or "移除提醒"))
+    if "priority" in changes:
+        lines.append("处理顺序：" + ("优先处理", "重点安排", "尽快处理", "有空再做")[changes["priority"]])
+    return "\n".join(lines)
+
+
+class AgentReplyDialog(QDialog):
+    submitted = Signal(str)
+    voice_requested = Signal()
+    discard_requested = Signal()
+
+    def __init__(self, reply, parent=None, offer_discard=False):
+        super().__init__(parent)
+        self.setWindowTitle("和小橘聊聊")
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(460, 340)
+        self._drag_origin = None
+        self.setStyleSheet("""
+            QWidget { background: transparent; color: #eee9e3; font-family: 'Microsoft YaHei UI'; }
+            QLabel { background: transparent; border: none; }
+            QScrollArea { background: transparent; border: none; }
+            QPlainTextEdit { background: #25262a; color: #eee9e3; border: 1px solid #434047;
+                border-radius: 10px; padding: 8px; font-size: 13px; }
+            QPushButton { background: transparent; color: #bfb9b4; border: none;
+                border-radius: 8px; padding: 8px 12px; }
+            QPushButton:hover { background: #343238; color: #f2eee9; }
+            QPushButton#primary { background: #efae78; color: #191511; }
+            QPushButton#primary:disabled { background: #4b4038; color: #746c66; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(26, 24, 26, 24)
+        header = QHBoxLayout()
+        title = QLabel("小橘")
+        title.setStyleSheet("font-size:17px;font-weight:600;")
+        header.addWidget(title)
+        header.addStretch()
+        close = QPushButton("×")
+        close.clicked.connect(self.reject)
+        header.addWidget(close)
+        layout.addLayout(header)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        body = QLabel(reply)
+        body.setTextFormat(Qt.TextFormat.PlainText)
+        body.setWordWrap(True)
+        body.setAlignment(Qt.AlignmentFlag.AlignTop)
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        body.setStyleSheet("font-size:14px;padding:8px 0;")
+        scroll.setWidget(body)
+        layout.addWidget(scroll, 1)
+        self.editor = QPlainTextEdit()
+        self.editor.setPlaceholderText("继续聊，或告诉我想怎么调整…")
+        self.editor.setMaximumHeight(76)
+        layout.addWidget(self.editor)
+        controls = QHBoxLayout()
+        voice = QPushButton("继续说")
+        voice.clicked.connect(self.voice_requested.emit)
+        controls.addWidget(voice)
+        controls.addStretch()
+        if offer_discard:
+            discard = QPushButton("丢弃未保存草稿")
+            discard.setAutoDefault(False)
+            discard.clicked.connect(self.discard_requested.emit)
+            controls.addWidget(discard)
+        self.send = QPushButton("发送")
+        self.send.setObjectName("primary")
+        self.send.setDefault(True)
+        self.send.setEnabled(False)
+        self.send.clicked.connect(self._submit)
+        self.editor.textChanged.connect(lambda: self.send.setEnabled(bool(self.editor.toPlainText().strip())))
+        controls.addWidget(self.send)
+        layout.addLayout(controls)
+        QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._submit)
+        QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self._submit)
+
+    def _submit(self):
+        text = self.editor.toPlainText().strip()
+        if text:
+            self.submitted.emit(text)
+
+    def paintEvent(self, event):
+        from ui.window_surface import paint_window_surface
+        paint_window_surface(self, dark=True)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() < 55:
+            self._drag_origin = event.globalPosition().toPoint() - self.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_origin is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_origin)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_origin = None
+        super().mouseReleaseEvent(event)
+
+
 class DraftDialog(QDialog):
     confirmed = Signal(list)
     revise = Signal(str)
     supplement = Signal()
 
-    def __init__(self, drafts, transcript, parent=None, editing=False):
+    def __init__(self, drafts, transcript, parent=None, editing=False, actions=None):
         super().__init__(parent)
         self.editing = editing
-        self.setWindowTitle("编辑事项" if editing else "加入灵动岛")
+        self.actions = list(actions or [])
+        self.setWindowTitle("编辑事项" if editing else "确认调整" if self.actions else "加入灵动岛")
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setObjectName("draftDialog")
-        self.resize(500, min(620, max(300, 190 + 68 * len(drafts)),
+        self.resize(500, min(620, max(300, 190 + 68 * (len(drafts) + len(self.actions))),
                              self.screen().availableGeometry().height() - 32))
         self._base_height = self.height()
         self.drafts = list(drafts)
@@ -370,7 +482,7 @@ class DraftDialog(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(10)
         heading = QHBoxLayout()
-        title = QLabel("编辑事项" if editing else "整理好了")
+        title = QLabel("编辑事项" if editing else "确认这次调整" if self.actions else "整理好了")
         title.setStyleSheet("font-size:19px;font-weight:600;")
         heading.addWidget(title)
         heading.addStretch()
@@ -379,7 +491,8 @@ class DraftDialog(QDialog):
         close_button.clicked.connect(self.reject)
         heading.addWidget(close_button)
         layout.addLayout(heading)
-        hint = QLabel("修改后，按 Enter 或点击“加入灵动岛”" if drafts and not editing else
+        hint = QLabel("下面是待执行的操作，确认后才会修改清单" if self.actions else
+                      "修改后，按 Enter 或点击“加入灵动岛”" if drafts and not editing else
                       "修改后，按 Enter 保存" if editing else "还没有可加入的事项")
         hint.setStyleSheet("color:#aaa19b;font-size:12px;")
         layout.addWidget(hint)
@@ -393,6 +506,12 @@ class DraftDialog(QDialog):
         self.items_layout = QVBoxLayout(container)
         self.items_layout.setContentsMargins(1, 1, 8, 1)
         self.items_layout.setSpacing(3)
+        for action in self.actions:
+            label = QLabel(describe_action(action))
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            label.setStyleSheet("font-size:13px;padding:10px 5px;border-bottom:1px solid #292a2e;")
+            self.items_layout.addWidget(label)
         for draft in self.drafts:
             self._add_row(draft)
         self.items_layout.addStretch()
@@ -400,7 +519,7 @@ class DraftDialog(QDialog):
         layout.addWidget(scroll, 1)
 
         if not editing:
-            transcript_button = QPushButton("原话 / 重新整理  ·  展开")
+            transcript_button = QPushButton("补充说明 / 重新理解  ·  展开")
             transcript_button.setStyleSheet("color:#b29c8c;font-size:12px;")
             layout.addWidget(transcript_button)
         self.transcript_panel = QWidget()
@@ -410,7 +529,7 @@ class DraftDialog(QDialog):
         self.transcript.setPlaceholderText("在这里修改原话，再重新整理")
         self.transcript.setMaximumHeight(76)
         transcript_layout.addWidget(self.transcript)
-        reparse_button = QPushButton("重新整理")
+        reparse_button = QPushButton("重新理解")
         reparse_button.clicked.connect(self.reparse)
         transcript_layout.addWidget(reparse_button)
         self.transcript_panel.hide()
@@ -435,13 +554,27 @@ class DraftDialog(QDialog):
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
         controls.addWidget(cancel)
-        self.primary = QPushButton("保存修改" if editing else "加入灵动岛")
+        self.primary = QPushButton("保存修改" if editing else "确认执行" if self.actions else "加入灵动岛")
         self.primary.setObjectName("primary")
-        self.primary.setEnabled(bool(self.rows))
+        self.primary.setEnabled(bool(self.rows or self.actions))
         self.primary.clicked.connect(self.confirm)
         controls.addWidget(self.primary)
         layout.addLayout(controls)
-        self.primary.setDefault(True)
+        if self.actions:
+            for button in self.findChildren(QPushButton):
+                button.setAutoDefault(False)
+                button.setDefault(False)
+        else:
+            self.primary.setDefault(True)
+
+    def keyPressEvent(self, event):
+        if self.actions and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            focused = self.focusWidget()
+            if isinstance(focused, QPushButton) and focused.isEnabled():
+                focused.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def paintEvent(self, event):
         from ui.window_surface import paint_window_surface
@@ -597,7 +730,23 @@ class DraftDialog(QDialog):
         self.rows = [row for row in self.rows if row["card"] is not card]
         self.items_layout.removeWidget(card)
         card.deleteLater()
-        self.primary.setEnabled(bool(self.rows))
+        self.primary.setEnabled(bool(self.rows or self.actions))
+
+    def context_values(self):
+        indices = {row["original"].get("id"): index for index, row in enumerate(self.rows)}
+        context = []
+        for row in self.rows:
+            old = row["original"]
+            due = (row["due"].values() or [None])[0]
+            reminders = row["reminders"].values()
+            questions = old.get("questions", [])
+            if row["accepted"] or self._questions_resolved(questions, due != old.get("due_at"), due,
+                                                          reminders != old.get("reminder_times", []), reminders):
+                questions = []
+            context.append({"draft_id": old.get("id"), "title": row["title"].text(), "priority": old.get("priority", 2),
+                            "due_at": due, "reminder_times": reminders, "questions": list(questions),
+                            "after": [indices[key] for key in old.get("dependencies", []) if key in indices]})
+        return context
 
     def _toggle_time_panel(self, panel):
         panel.setVisible(not panel.isVisible())
@@ -674,8 +823,68 @@ class DraftDialog(QDialog):
                 except (ValueError, TypeError) as error:
                     self._show_error(row, row["title"], str(error))
                     return
-        if result:
+        if result or self.actions:
             self.confirmed.emit(result)
+
+
+class FileActionDialog(QDialog):
+    selected = Signal(str, str)
+
+    def __init__(self, paths):
+        super().__init__()
+        self.setWindowTitle("交给小橘处理")
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(400, 280)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        heading = QLabel("想怎么处理？")
+        heading.setStyleSheet("font-size:18px;font-weight:600;background:transparent;")
+        layout.addWidget(heading)
+        names = QLabel("\n".join(Path(path).name or path for path in paths))
+        names.setTextFormat(Qt.TextFormat.PlainText)
+        names.setWordWrap(True)
+        names.setStyleSheet("color:#667181;font-size:12px;background:transparent;")
+        layout.addWidget(names)
+        self.choice = QComboBox()
+        for text, value in (("临时阅读 · 下一条提问使用", "临时阅读"), ("总结内容", "总结"),
+                            ("提取待办 · 确认后加入清单", "提取任务"), ("加入本机资料库", "加入知识库"),
+                            ("问这个文件", "提问")):
+            self.choice.addItem(text, value)
+        layout.addWidget(self.choice)
+        self.question = QLineEdit()
+        self.question.setPlaceholderText("你想了解什么？")
+        self.question.hide()
+        layout.addWidget(self.question)
+        self.choice.currentIndexChanged.connect(lambda: self.question.setVisible(self.choice.currentData() == "提问"))
+        note = QLabel("只有选择“加入本机资料库”才会长期保存。模型分析时会使用你配置的服务。"
+                      + ("\n文件夹只列出第一层目录，不会自动读取其中所有文件。" if any(Path(path).is_dir() for path in paths) else ""))
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#788292;font-size:11px;background:transparent;")
+        layout.addWidget(note)
+        layout.addStretch()
+        controls = QHBoxLayout()
+        controls.addStretch()
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        controls.addWidget(cancel)
+        confirm = QPushButton("开始")
+        confirm.setDefault(True)
+        confirm.clicked.connect(self._select)
+        controls.addWidget(confirm)
+        layout.addLayout(controls)
+
+    def _select(self):
+        question = self.question.text().strip()
+        if self.choice.currentData() == "提问" and not question:
+            self.question.setFocus()
+            return
+        self.selected.emit(self.choice.currentData(), question)
+        self.accept()
+
+    def paintEvent(self, event):
+        from ui.window_surface import paint_window_surface
+        paint_window_surface(self)
 
 
 class ReminderCard(QDialog):

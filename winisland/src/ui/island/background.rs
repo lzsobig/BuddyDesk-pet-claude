@@ -47,6 +47,7 @@ pub(super) fn draw_background(params: BackgroundParams<'_, '_>) {
         island_style
     };
     match island_style {
+        "agent_input" => draw_solid(painter, island_path, Rgba::from_argb(242, 24, 26, 30)),
         "glass" => {
             if host_backdrop {
                 draw_host_glass(painter, island_path);

@@ -135,6 +135,7 @@ impl App {
     }
 
     pub(super) fn invalidate_renderer(&mut self, reason: &str, now: Instant) {
+        self.input_rendered_session = None;
         let renderer = self.renderer.take();
         if renderer.is_some() {
             log::warn!("Renderer invalidated: {reason}");
@@ -151,6 +152,9 @@ impl App {
         drop(renderer);
         self.renderer_retry_at = Some(now);
         self.next_frame_deadline = now;
+        if let Some(window_ref) = self.window {
+            self.publish_input_surface(&window_ref, now);
+        }
     }
 
     pub(super) fn create_host_backdrop(&mut self, window_ref: &WindowRef) {

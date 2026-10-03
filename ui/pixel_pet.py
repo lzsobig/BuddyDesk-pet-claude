@@ -159,7 +159,7 @@ class PixelPet(QWidget):
 
     def dropEvent(self, event):
         urls = event.mimeData().urls()
-        paths = [u.toLocalFile() for u in urls if u.toLocalFile() and os.path.isfile(u.toLocalFile())]
+        paths = [u.toLocalFile() for u in urls if u.toLocalFile() and os.path.exists(u.toLocalFile())]
         if not paths:
             return
         event.acceptProposedAction()
@@ -171,6 +171,7 @@ class PixelPet(QWidget):
         for fp in filtered:
             self.say(f"跳过敏感文件\n{os.path.basename(fp)}", 2000)
         if kept:
+            self.say("收到啦，选一下怎么处理", 1800)
             self.file_dropped.emit(kept)
 
     def _play_eat_anim(self):

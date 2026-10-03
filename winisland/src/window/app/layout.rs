@@ -30,14 +30,23 @@ impl App {
         };
         let width = compact_width
             .max(compact_overlay.width)
-            .max(self.config.expanded_width * expanded_scale);
-        let height = compact_lyric_height.max(compact_overlay.height).max(
-            (self.config.expanded_height
-                + crate::ui::expanded::today_section::MAX_HEIGHT
-                + crate::ui::expanded::pager::PAGER_EXTENT)
-                * expanded_scale,
-        );
+            .max(self.config.expanded_width * expanded_scale)
+            .max(self.input_target_size().0);
+        let height = compact_lyric_height
+            .max(compact_overlay.height)
+            .max(
+                (self.config.expanded_height
+                    + crate::ui::expanded::today_section::MAX_HEIGHT
+                    + crate::ui::expanded::pager::PAGER_EXTENT)
+                    * expanded_scale,
+            )
+            .max(self.input_target_size().1);
         WindowSize::new((width + PADDING) as u32, (height + PADDING) as u32)
+    }
+
+    pub(super) fn input_target_size(&self) -> (f32, f32) {
+        let dpi = self.window.map_or(1.0, |window| window.scale_factor()) as f32;
+        (360.0 * dpi, 112.0 * dpi)
     }
 
     pub(super) fn get_target_monitor(window: &WindowRef, monitor_index: i32) -> Option<MonitorRef> {
@@ -251,6 +260,9 @@ impl App {
     }
 
     pub(super) fn can_hide(&self) -> bool {
+        if !self.agent.input_session().is_empty() {
+            return false;
+        }
         let edge_size = self.springs.h.value as f64;
         edge_size - self.hidden_visible_height() > f64::EPSILON
     }

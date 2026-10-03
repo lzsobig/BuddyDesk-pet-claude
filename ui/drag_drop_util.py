@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Iterable
+from urllib.parse import unquote, urlsplit
 
 
 # 关键词黑名单（中文 + 英文 + 扩展名）
@@ -49,6 +50,11 @@ def is_sensitive_path(path: str) -> bool:
     """
     if not path:
         return False
+    if path.lower().startswith("file://"):
+        parsed = urlsplit(path)
+        if parsed.netloc.lower() not in ("", "localhost"):
+            return True
+        path = unquote(parsed.path)
     # 拆文件名 + 父目录 + 完整路径，三处都查
     name = os.path.basename(path).lower()
     parent = os.path.basename(os.path.dirname(path)).lower()
@@ -72,7 +78,7 @@ def is_sensitive_path(path: str) -> bool:
 
 
 def filter_sensitive_filepaths(paths: Iterable[str]) -> tuple[list[str], list[str]]:
-    """过滤一组文件路径，返回 (通过的, 被过滤的)。
+    """过滤文件或目录路径，返回 (通过的, 被过滤的)。
 
     Args:
         paths: 文件路径列表

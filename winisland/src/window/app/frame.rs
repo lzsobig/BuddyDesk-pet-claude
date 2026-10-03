@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use winisland_platform::WindowPosition;
 
+use crate::core::agent::InputSurfaceRect;
 use crate::platform::WindowRef;
 use crate::ui::compact::CompactOverlayState;
 use crate::ui::expanded::music_view::{
@@ -62,7 +63,7 @@ impl App {
             self.geom.win_y = self.geom.configured_y;
             window.set_outer_position(WindowPosition::new(self.geom.win_x, self.geom.win_y));
         }
-        if self.topmost_check.due(now) {
+        if self.topmost_check.due(now) && self.agent.input_session().is_empty() {
             Self::enforce_overlay_window(&window);
         }
         self.handle_tray_events(&window);
@@ -79,11 +80,36 @@ impl App {
             window.request_redraw();
         }
         let agent_poll = self.agent.poll(now);
+        let input_active = !self.agent.input_session().is_empty();
+        if input_active {
+            self.expanded = true;
+            if !self.visible {
+                self.visible = true;
+                window.set_visible(true);
+            }
+            if !self.input_was_active || self.is_hidden() {
+                self.reveal_island();
+            }
+            self.hide.fullscreen = false;
+            self.is_dragging = false;
+            self.drag_axis = None;
+            self.is_right_dragging = false;
+            self.right_press_cursor = None;
+            self.expanded_press_started_inside = false;
+            self.expanded_header_press = None;
+            self.compact_overlay.finish_volume_drag();
+            self.compact_overlay.finish_brightness_drag();
+            self.seek.active = false;
+        } else if self.input_was_active {
+            self.expanded = false;
+            self.input_rendered_session = None;
+        }
+        self.input_was_active = input_active;
         if let Some(snapshot) = self.agent.snapshot() {
             self.companion
                 .set_agent_status(snapshot.state(self.agent.connected()), &snapshot.label);
         }
-        if agent_poll.new_reminder_id.is_some() || agent_poll.reveal_requested {
+        if !input_active && (agent_poll.new_reminder_id.is_some() || agent_poll.reveal_requested) {
             self.expanded = true;
             self.reveal_island();
         }
@@ -109,6 +135,7 @@ impl App {
         self.last_update_time = now;
 
         if !self.visible {
+            self.publish_input_surface(&window, now);
             self.compact_overlay.finish_volume_drag();
             self.compact_overlay.finish_brightness_drag();
             self.audio.set_gate_override(false);
@@ -183,7 +210,7 @@ impl App {
             log::info!("Island revealed by fullscreen edge double-click");
         }
 
-        if interaction_suppressed {
+        if input_active || interaction_suppressed {
             window.set_cursor_hittest(false);
         } else {
             window.set_cursor_hittest(
@@ -201,7 +228,7 @@ impl App {
             media_is_playing,
         );
 
-        if self.compact_overlay.is_volume_dragging() {
+        if !input_active && self.compact_overlay.is_volume_dragging() {
             if self.input_pressed() && !interaction_suppressed {
                 self.update_volume_drag_position(rel_x, &layout);
             } else {
@@ -209,7 +236,7 @@ impl App {
             }
             window.request_redraw();
         }
-        if self.compact_overlay.is_brightness_dragging() {
+        if !input_active && self.compact_overlay.is_brightness_dragging() {
             if self.input_pressed() && !interaction_suppressed {
                 self.update_brightness_drag_position(rel_x, &layout);
             } else {
@@ -218,15 +245,18 @@ impl App {
             window.request_redraw();
         }
 
-        self.update_seeking_input(&window, rel_x);
-        self.update_progress_hover(rel_x, rel_y, offset_x, island_y, music_active);
-        self.update_pager_hover(&window, rel_x, rel_y, &layout, !interaction_suppressed, dt);
+        if !input_active {
+            self.update_seeking_input(&window, rel_x);
+            self.update_progress_hover(rel_x, rel_y, offset_x, island_y, music_active);
+            self.update_pager_hover(&window, rel_x, rel_y, &layout, !interaction_suppressed, dt);
+            self.update_expand_collapse_click(&window, is_hovering_visible);
+        }
         self.update_hide_drag(&window, px, py, dt);
-        self.update_expand_collapse_click(&window, is_hovering_visible);
 
         let is_paused = music_active && !media_is_playing;
         self.update_lyrics(&window, music_active, is_paused, dt);
         self.update_spring_targets(&window, music_active, is_paused, dt);
+        self.publish_input_surface(&window, now);
         self.update_compact_widget_refresh(&window, now);
 
         self.schedule_next_frame(
@@ -524,6 +554,11 @@ impl App {
         music_active: bool,
         media_is_playing: bool,
     ) -> bool {
+        if !self.agent.input_session().is_empty() {
+            self.hide.auto = false;
+            self.idle_timer = Instant::now();
+            return false;
+        }
         let is_paused_idle = music_active && !media_is_playing;
         let overlay_present = !self.expanded && !self.is_hidden();
         let fullscreen_hidden = self.fullscreen_hide_active();
@@ -892,7 +927,10 @@ impl App {
         } else {
             compact_content_h / 2.0
         };
-        let (target_w, target_h, target_r) = if let Some(size) = self.compact_overlay.target_size(
+        let (target_w, target_h, target_r) = if !self.agent.input_session().is_empty() {
+            let (width, height) = self.input_target_size();
+            (width, height, 22.0 * window.scale_factor() as f32)
+        } else if let Some(size) = self.compact_overlay.target_size(
             self.config.base_width,
             self.config.base_height,
             self.config.compact_scale,
@@ -944,6 +982,48 @@ impl App {
         if was_animating && !self.springs.any_animating() {
             window.request_redraw();
         }
+    }
+
+    pub(super) fn publish_input_surface(&mut self, window: &WindowRef, now: Instant) {
+        let input_session = self.agent.input_session();
+        let active = !input_session.is_empty();
+        let layout = self.compute_island_layout();
+        let dpi = window.scale_factor();
+        let (target_w, target_h) = self.input_target_size();
+        let (x, y, width, height) = if active {
+            (
+                layout.current_island_x,
+                layout.current_island_y,
+                self.springs.w.value,
+                self.springs.h.value,
+            )
+        } else {
+            (
+                layout.current_island_x + (self.springs.w.value - target_w) as f64 / 2.0,
+                layout.current_island_y + (self.springs.h.value - target_h) as f64 / 2.0,
+                target_w,
+                target_h,
+            )
+        };
+        let ready = active
+            && self.visible
+            && self.renderer.is_some()
+            && self.input_rendered_session.as_deref() == Some(input_session)
+            && self.springs.hide.value.abs() < 0.01
+            && (self.springs.w.value - target_w).abs() <= 2.0
+            && (self.springs.h.value - target_h).abs() <= 2.0;
+        self.input_surface.publish(
+            now,
+            input_session,
+            ready,
+            InputSurfaceRect {
+                x: self.geom.win_x + x.round() as i32,
+                y: self.geom.win_y + y.round() as i32,
+                width: width.round().max(1.0) as u32,
+                height: height.round().max(1.0) as u32,
+            },
+            dpi,
+        );
     }
 
     fn update_compact_widget_refresh(&mut self, window: &WindowRef, now: Instant) {

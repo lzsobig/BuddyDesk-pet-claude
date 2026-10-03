@@ -96,6 +96,9 @@ impl App {
                     self.install_zip_drop(&path);
                 }
                 PlatformEvent::MouseWheel { delta, .. } => {
+                    if !self.agent.input_session().is_empty() {
+                        return;
+                    }
                     let (px, py) = get_global_cursor_pos();
                     if self.handle_mouse_wheel(delta, px, py) {
                         win.request_redraw();
@@ -178,15 +181,18 @@ impl App {
                         };
                         let compact_target_h = self.compact_content_height();
                         let compact_content_h = compact_target_h.min(self.springs.h.value).max(0.0);
-                        let total_h = ((self.config.expanded_height
-                            + crate::ui::expanded::today_section::height(
-                                self.agent.snapshot(),
-                                self.agent.connected(),
-                            ))
-                            * self.config.expanded_scale
-                            - compact_target_h)
-                            .abs()
-                            .max(1.0);
+                        let input_active = !self.agent.input_session().is_empty();
+                        let target_h = if input_active {
+                            self.input_target_size().1
+                        } else {
+                            (self.config.expanded_height
+                                + crate::ui::expanded::today_section::height(
+                                    self.agent.snapshot(),
+                                    self.agent.connected(),
+                                ))
+                                * self.config.expanded_scale
+                        };
+                        let total_h = (target_h - compact_target_h).abs().max(1.0);
                         let dist_h = (self.springs.h.value - compact_target_h).abs();
                         let progress = (dist_h / total_h).clamp(0.0, 1.0);
                         if let Some(event) = self.next_v2_media_event() {
@@ -334,7 +340,7 @@ impl App {
                             self.springs.hide.value * island_layout.content_hide_ratio,
                             self.compact_overlay.is_visible(),
                         );
-                        let pager_backdrop = if pager_alpha > 0.01 {
+                        let pager_backdrop = if !input_active && pager_alpha > 0.01 {
                             let pager = crate::ui::expanded::pager::visible_layout(
                                 winisland_render::Rect::from_xywh(
                                     island_layout.current_island_x as f32,
@@ -365,10 +371,11 @@ impl App {
                             &mut self.host_backdrop,
                             win.id(),
                             HostBackdropParams {
-                                enabled: matches!(
-                                    self.config.island_style.as_str(),
-                                    "glass" | "dynamic"
-                                ),
+                                enabled: input_active
+                                    || matches!(
+                                        self.config.island_style.as_str(),
+                                        "glass" | "dynamic"
+                                    ),
                                 screen_x: self.geom.win_x as f32
                                     + island_layout.current_island_x as f32,
                                 screen_y: self.geom.win_y as f32
@@ -386,6 +393,7 @@ impl App {
                                     drawing_context,
                                     painter,
                                     crate::ui::island::DrawIslandParams {
+                                        input_active,
                                         layout: crate::ui::island::LayoutParams {
                                             pager_above: island_layout.dock_bottom,
                                             pager_bar_hover: self.bar_hover.value,
@@ -438,7 +446,9 @@ impl App {
                                             agent_snapshot: self.agent.snapshot(),
                                             agent_connected: self.agent.connected(),
                                             companion_hidden: compact_components_hidden,
-                                            island_style: if compact_components_hidden {
+                                            island_style: if compact_components_hidden
+                                                && !input_active
+                                            {
                                                 "solid"
                                             } else {
                                                 &self.config.island_style
@@ -476,9 +486,24 @@ impl App {
                                 )
                             });
                         self.renderer = Some(renderer);
-                        if let Err(error) = render_result {
-                            self.invalidate_renderer(&error.to_string(), Instant::now());
+                        match render_result {
+                            Ok(_) => {
+                                if input_active {
+                                    let (target_w, target_h) = self.input_target_size();
+                                    if (self.springs.w.value - target_w).abs() <= 2.0
+                                        && (self.springs.h.value - target_h).abs() <= 2.0
+                                        && self.springs.hide.value.abs() < 0.01
+                                    {
+                                        self.input_rendered_session =
+                                            Some(self.agent.input_session().to_owned());
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                self.invalidate_renderer(&error.to_string(), Instant::now());
+                            }
                         }
+                        self.publish_input_surface(&win, Instant::now());
                     }
                 }
                 _ => (),

@@ -16,6 +16,7 @@ import subprocess
 import threading
 import re
 import shutil
+import locale
 from datetime import datetime
 from typing import Optional
 
@@ -23,6 +24,24 @@ import config
 
 # Suppress CMD window flash on Windows for all subprocess calls
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
+def _decode_command_output(raw: bytes, encoding: str | None = None) -> str:
+    if not raw:
+        return ""
+    if encoding:
+        return raw.decode(encoding)
+    candidates = ["utf-8-sig"]
+    if sys.platform == "win32":
+        import ctypes
+        candidates.extend((f"cp{ctypes.windll.kernel32.GetOEMCP()}", "mbcs"))
+    candidates.extend((locale.getpreferredencoding(False), "gb18030"))
+    for candidate in dict.fromkeys(candidates):
+        try:
+            return raw.decode(candidate)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode(candidates[1], errors="replace")
 
 # Windows registry — imported once at module load so helper methods don't
 # each need a local import. winreg only exists on win32.
@@ -859,17 +878,23 @@ class CommandEngine:
                 or '$' in cmd
                 or '`' in cmd
             )
-            if _needs_shell:
+            unicode_dir = (sys.platform == "win32" and not _needs_shell
+                           and re.match(r"^\s*dir(?:\s|$)", cmd, re.IGNORECASE))
+            if unicode_dir:
                 result = subprocess.run(
-                    cmd,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    encoding="utf-8",
-                    errors="replace",
+                    "cmd.exe /u /c " + cmd,
+                    shell=False, capture_output=True, timeout=30,
                     creationflags=_NO_WINDOW,
                 )
+                stdout = _decode_command_output(result.stdout, "utf-16-le")
+                stderr = _decode_command_output(result.stderr, "utf-16-le")
+            elif _needs_shell:
+                result = subprocess.run(
+                    cmd, shell=True, capture_output=True, timeout=30,
+                    creationflags=_NO_WINDOW,
+                )
+                stdout = _decode_command_output(result.stdout)
+                stderr = _decode_command_output(result.stderr)
             else:
                 try:
                     args = shlex.split(cmd, posix=False)
@@ -882,10 +907,7 @@ class CommandEngine:
                             args,
                             shell=False,
                             capture_output=True,
-                            text=True,
                             timeout=30,
-                            encoding="utf-8",
-                            errors="replace",
                             creationflags=_NO_WINDOW,
                         )
                     except FileNotFoundError:
@@ -895,10 +917,7 @@ class CommandEngine:
                             cmd,
                             shell=True,
                             capture_output=True,
-                            text=True,
                             timeout=30,
-                            encoding="utf-8",
-                            errors="replace",
                             creationflags=_NO_WINDOW,
                         )
                 else:
@@ -906,14 +925,13 @@ class CommandEngine:
                         cmd,
                         shell=True,
                         capture_output=True,
-                        text=True,
                         timeout=30,
-                        encoding="utf-8",
-                        errors="replace",
                         creationflags=_NO_WINDOW,
                     )
+                stdout = _decode_command_output(result.stdout)
+                stderr = _decode_command_output(result.stderr)
 
-            output = result.stdout + result.stderr
+            output = stdout + stderr
             success = result.returncode == 0
 
             self._command_history.append({

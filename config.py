@@ -144,6 +144,8 @@ DEFAULT_USER_CONFIG: dict[str, Any] = {
     "clipboard_monitor": False,
     "autostart": False,
     "voice_mode": "local",
+    "agent_voice_provider": "local",
+    "agent_access_mode": "confirm",
     "voice_model_dir": "",
     "voice_api_base": "https://api.openai.com/v1",
     "voice_api_key": "",

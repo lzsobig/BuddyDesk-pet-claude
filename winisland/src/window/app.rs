@@ -1,4 +1,4 @@
-use crate::core::agent::AgentBridge;
+use crate::core::agent::{AgentBridge, InputSurfacePublisher};
 use crate::core::audio::AudioProcessor;
 use crate::core::companion::Companion;
 use crate::core::persistence::{get_config_path, load_config};
@@ -72,6 +72,9 @@ pub struct App {
     audio: AudioProcessor,
     companion: Companion,
     agent: AgentBridge,
+    input_surface: InputSurfacePublisher,
+    input_was_active: bool,
+    input_rendered_session: Option<String>,
     compact_overlay: CompactOverlay,
     config: AppConfig,
     expanded: bool,
@@ -214,6 +217,9 @@ impl Default for App {
             audio: AudioProcessor::new(),
             companion: Companion::default(),
             agent: AgentBridge::new(),
+            input_surface: InputSurfacePublisher::new(),
+            input_was_active: false,
+            input_rendered_session: None,
             compact_overlay: CompactOverlay::new(
                 config.replace_native_volume_flyout,
                 config.brightness_overlay_enabled,
@@ -659,6 +665,7 @@ impl App {
         self.config.fullscreen_auto_hide
             && self.is_fullscreen_suppressed
             && !self.fullscreen_hide_paused
+            && self.agent.input_session().is_empty()
     }
 
     fn reveal_island(&mut self) {

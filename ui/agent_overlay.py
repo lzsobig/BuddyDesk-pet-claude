@@ -290,7 +290,7 @@ class AgentOverlay(QWidget):
         painter.end()
 
     def _draw_transcript_panel(self, painter: QPainter) -> None:
-        if self.external_input_active:
+        if self.external_input_active or self._state in ("understanding", "thinking", "executing", "success"):
             return
         screen_width = self.width()
         panel_width = min(720.0, max(280.0, screen_width - 56.0))

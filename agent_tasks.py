@@ -8,6 +8,7 @@ import math
 import os
 import re
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
@@ -407,10 +408,15 @@ class TaskStore:
             parent = os.path.dirname(os.path.abspath(selected_path))
             os.makedirs(parent, exist_ok=True)
         self.path = selected_path
+        self._transaction_scope = threading.local()
         self._initialize()
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
+        active = getattr(self._transaction_scope, "connection", None)
+        if active is not None:
+            yield active
+            return
         connection = sqlite3.connect(
             self.path,
             timeout=5.0,
@@ -427,8 +433,13 @@ class TaskStore:
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
+        active = getattr(self._transaction_scope, "connection", None)
+        if active is not None:
+            yield active
+            return
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            self._transaction_scope.connection = connection
             try:
                 yield connection
             except BaseException:
@@ -436,6 +447,8 @@ class TaskStore:
                 raise
             else:
                 connection.commit()
+            finally:
+                self._transaction_scope.connection = None
 
     @staticmethod
     def _add_column_if_missing(
@@ -803,6 +816,71 @@ class TaskStore:
                 ).fetchone()
                 output.append(_row_to_task(row))
             return output
+
+    def apply_plan(self, drafts, actions):
+        if not isinstance(drafts, list) or not isinstance(actions, list) or len(actions) > 20:
+            raise TaskValidationError("交互计划格式无效")
+        with self._transaction() as connection:
+            seen = set()
+            prepared_changes = {}
+            for action in actions:
+                if not isinstance(action, dict) or action.get("type") not in ("delete", "update", "complete", "reopen"):
+                    raise TaskValidationError("操作类型无效")
+                identity = _identifier(action.get("task_id"), "task_id")
+                if identity in seen:
+                    raise TaskValidationError("同一事项不能同时执行多个操作")
+                seen.add(identity)
+                task = self.get_task(identity)
+                if task is None or task["updated_at"] != action.get("expected_updated_at"):
+                    raise TaskConflictError("事项已经发生变化，请重新理解后再确认")
+                changes = action.get("changes", {})
+                if not isinstance(changes, dict) or set(changes) - {"title", "priority", "due_at", "reminder_times"}:
+                    raise TaskValidationError("修改字段无效")
+                if (action["type"] == "update") != bool(changes):
+                    raise TaskValidationError("操作与修改字段不一致")
+                prepared_changes[identity] = dict(changes)
+                if "reminder_times" in changes:
+                    prepared_changes[identity]["reminder_repeat_rules"] = self._preserved_reminder_rules(
+                        connection, identity, changes["reminder_times"])
+            for action in actions:
+                identity = action["task_id"]
+                if action["type"] == "delete":
+                    self.delete_task(identity)
+                elif action["type"] == "update":
+                    self.update_task(identity, prepared_changes[identity])
+                elif action["type"] == "complete":
+                    self.complete_task(identity)
+                else:
+                    self.reopen_task(identity)
+            created = self.confirm_drafts(drafts) if drafts else []
+            self._audit_conn(connection, "interaction.apply", None, "confirmed",
+                             f"created={len(created)},actions={len(actions)}")
+            return {"created": created, "actions": len(actions)}
+
+    def _preserved_reminder_rules(self, connection, task_id, moments):
+        if not isinstance(moments, list):
+            raise TaskValidationError("提醒时间必须是列表")
+        rows = connection.execute(
+            "SELECT trigger_at, repeat_rule FROM reminders WHERE task_id = ? "
+            "AND status IN ('pending', 'firing') ORDER BY trigger_at, id", (task_id,),
+        ).fetchall()
+        remaining = list(rows)
+        rules, unmatched = [], []
+        for index, moment in enumerate(moments):
+            parsed = _parse_datetime(moment, "reminder_time")
+            existing = next((row for row in remaining if _parse_datetime(row["trigger_at"], "time") == parsed), None)
+            rules.append(existing["repeat_rule"] if existing is not None else "none")
+            if existing is not None:
+                remaining.remove(existing)
+            else:
+                unmatched.append(index)
+        if unmatched and any(row["repeat_rule"] != "none" for row in remaining):
+            kinds = {row["repeat_rule"] for row in remaining}
+            if len(unmatched) != len(remaining) or len(kinds) != 1:
+                raise TaskValidationError("这件事有不同的重复提醒，请明确要调整哪一个时间")
+            for index in unmatched:
+                rules[index] = remaining[0]["repeat_rule"]
+        return rules
 
     def list_tasks(self, include_done: bool = False) -> list[dict[str, Any]]:
         with self._connection() as connection:

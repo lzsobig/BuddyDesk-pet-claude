@@ -109,6 +109,7 @@ thread_local! {
 }
 
 pub struct DrawIslandParams<'a> {
+    pub input_active: bool,
     pub layout: LayoutParams,
     pub media: MediaParams<'a>,
     pub lyrics: LyricsParams<'a>,
@@ -153,6 +154,10 @@ pub fn draw_island(
     };
     draw_expanded_shadow(painter, &params, &island_path);
     draw_background_layer(painter, drawing_context, &params, rect, &island_path);
+    if params.input_active {
+        draw_island_border(painter, &params);
+        return false;
+    }
     painter.save();
     painter.clip_path(&island_path);
 
@@ -318,7 +323,15 @@ fn draw_background_layer(
         drawing_context,
         rect,
         island_path,
-        island_style: params.style.island_style,
+        island_style: if params.input_active {
+            if params.style.host_backdrop {
+                "glass"
+            } else {
+                "agent_input"
+            }
+        } else {
+            params.style.island_style
+        },
         host_backdrop: params.style.host_backdrop,
         media: params.media.media,
     });
@@ -496,12 +509,13 @@ fn draw_pager(
 
 fn draw_island_border(painter: Painter<'_>, params: &DrawIslandParams<'_>) {
     let layout = &params.layout;
-    let alpha = if params.style.island_style == SOLID_STYLE {
+    let solid_style = !params.input_active && params.style.island_style == SOLID_STYLE;
+    let alpha = if solid_style {
         SOLID_BORDER_ALPHA
     } else {
         EFFECT_BORDER_ALPHA
     };
-    let opacity = if params.style.island_style == SOLID_STYLE {
+    let opacity = if solid_style {
         1.0 - layout.expansion_progress.clamp(0.0, 1.0)
     } else {
         1.0

@@ -14,6 +14,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QColor, QPainter, QPalette
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget,
     QPushButton, QScrollArea, QApplication, QSizePolicy, QMenu, QListWidget, QListWidgetItem, QSizeGrip,
+    QFileDialog,
 )
 
 from bridge import AIBridge
@@ -54,6 +55,7 @@ class ChatWindow(ChatBaseWindow):
         self.bridge = bridge
         self._streaming = False
         self._typing_widget: _TypingBubble | None = None
+        self._tool_busy_widget: _TypingBubble | None = None
         self._live_widget: _MessageBubble | None = None
         self._live_text: str = ""
         self._error_card = None
@@ -234,6 +236,8 @@ class ChatWindow(ChatBaseWindow):
         menu.addAction("重新生成回答    Ctrl+R", self._regenerate)
         menu.addAction("清空当前对话    Ctrl+L", self._clear)
         menu.addSeparator()
+        menu.addAction("语音设置", lambda: self._open_settings_page(2))
+        menu.addAction("访问权限", lambda: self._open_settings_page(1))
         menu.addAction("设置", self.settings_requested.emit)
         more.clicked.connect(lambda: menu.exec(more.mapToGlobal(more.rect().bottomLeft())))
         layout.addWidget(more)
@@ -268,8 +272,25 @@ class ChatWindow(ChatBaseWindow):
             f"border-radius:14px; }}"
         )
         composer = QHBoxLayout(pill)
-        composer.setContentsMargins(16, 9, 9, 9)
+        composer.setContentsMargins(9, 9, 9, 9)
         composer.setSpacing(4)
+        self._attach_btn = QPushButton("＋")
+        self._attach_btn.setFixedSize(30, 30)
+        self._attach_btn.setToolTip("添加文件或文件夹")
+        self._attach_btn.setAccessibleName("添加附件")
+        self._attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._attach_btn.setStyleSheet(
+            f"QPushButton {{background:transparent;color:{TEXT_MUTED};border:none;"
+            f"padding:0;font-size:20px;}}"
+            f"QPushButton:hover {{background:{BG_SUBTLE};border-radius:8px;color:{ACCENT};}}"
+        )
+        attachment_menu = QMenu(self._attach_btn)
+        attachment_menu.addAction("选择文件…", self._choose_files)
+        attachment_menu.addAction("选择文件夹…", self._choose_folder)
+        self._attach_btn.clicked.connect(
+            lambda: attachment_menu.exec(self._attach_btn.mapToGlobal(self._attach_btn.rect().topLeft()))
+        )
+        composer.addWidget(self._attach_btn, 0, Qt.AlignmentFlag.AlignBottom)
         self._input = ChatInput("发送消息…")
         self._input.setAccessibleName("消息输入框")
         self._input.send_signal.connect(self._send)
@@ -289,7 +310,41 @@ class ChatWindow(ChatBaseWindow):
         self._send_btn.clicked.connect(self._send_or_stop)
         composer.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignBottom)
         layout.addWidget(pill)
+        self._access_mode_btn = QPushButton()
+        self._access_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._access_mode_btn.setToolTip("打开访问权限设置")
+        self._access_mode_btn.setStyleSheet(
+            f"QPushButton {{background:transparent;color:{TEXT_MUTED};border:none;"
+            f"padding:4px 2px 0;font-size:10px;}}"
+            f"QPushButton:hover {{color:{ACCENT};}}"
+        )
+        self._access_mode_btn.clicked.connect(lambda: self._open_settings_page(1))
+        layout.addWidget(self._access_mode_btn, 0, Qt.AlignmentFlag.AlignRight)
+        self.refresh_access_mode()
         return wrap
+
+    def _open_settings_page(self, page: int):
+        main_app = self._find_main_app()
+        if main_app is not None:
+            main_app._open_settings(page)
+        else:
+            self.settings_requested.emit()
+
+    def refresh_access_mode(self):
+        mode = self.bridge.user_config.get("agent_access_mode", "confirm")
+        label = "完全访问" if mode == "full" else "逐次确认"
+        self._access_mode_btn.setText(f"访问权限：{label} ›")
+        self._access_mode_btn.setAccessibleName(f"访问权限：{label}，打开设置")
+
+    def _choose_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "选择文件")
+        if paths:
+            self._on_dropped_files(paths)
+
+    def _choose_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "选择文件夹")
+        if path:
+            self._on_dropped_files([path])
 
     # ── wire ──
     def _wire(self):
@@ -312,6 +367,9 @@ class ChatWindow(ChatBaseWindow):
     def _on_voice_button(self):
         """Toggle push-to-talk from the visible microphone control."""
         main_app = self._find_main_app()
+        if main_app and main_app.agent:
+            main_app.agent.start_chat_voice()
+            return
         voice = getattr(main_app, "voice_input", None) if main_app else None
         if voice is None or not voice.is_available():
             self._sys(getattr(voice, "last_error", "") or "请在设置 → 语音中配置识别方式")
@@ -445,7 +503,10 @@ class ChatWindow(ChatBaseWindow):
             width = max(180, self._scroll.viewport().width() - 48)
             w.setMaximumWidth(width)
             w._bubble.setMaximumWidth(width if w._role == "ai" else int(width * 0.88))
-        idx = self._messages_layout.count() - 1
+        busy = getattr(self, "_tool_busy_widget", None)
+        idx = self._messages_layout.indexOf(busy) if busy is not None and w is not busy else -1
+        if idx < 0:
+            idx = self._messages_layout.count() - 1
         if idx < 0:
             self._messages_layout.addWidget(w)
         else:
@@ -666,6 +727,8 @@ class ChatWindow(ChatBaseWindow):
 
     def _clear_message_display(self) -> None:
         """Remove all widgets from the message layout (but keep the trailing stretch)."""
+        self._remove_typing()
+        self.set_tool_busy(False)
         self._streaming = False
         self._set_generating(False)
         self._live_widget = None
@@ -757,6 +820,19 @@ class ChatWindow(ChatBaseWindow):
             self._typing_widget.deleteLater()
             self._typing_widget = None
 
+    def set_tool_busy(self, busy: bool, label: str = ""):
+        if busy:
+            if self._tool_busy_widget is None:
+                self._tool_busy_widget = _TypingBubble("正在使用工具")
+                self._append_widget(self._tool_busy_widget)
+            if label:
+                self._tool_busy_widget.set_progress(label, trusted=True)
+        elif self._tool_busy_widget is not None:
+            self._messages_layout.removeWidget(self._tool_busy_widget)
+            self._tool_busy_widget.setParent(None)
+            self._tool_busy_widget.deleteLater()
+            self._tool_busy_widget = None
+
     def _dismiss_error(self):
         if self._error_card is not None:
             self._messages_layout.removeWidget(self._error_card)
@@ -794,7 +870,7 @@ class ChatWindow(ChatBaseWindow):
         self._set_generating(True)
         self._typing_widget = _TypingBubble()
         self._append_widget(self._typing_widget)
-        self.bridge.send([dict(message) for message in self.messages])
+        self.bridge.send(self._message_payload())
 
     def _send(self):
         text = self._input.toPlainText().strip()
@@ -821,7 +897,7 @@ class ChatWindow(ChatBaseWindow):
         self._set_generating(True)
         self._typing_widget = _TypingBubble()
         self._append_widget(self._typing_widget)
-        self.bridge.send([dict(message) for message in self.messages])
+        self.bridge.send(self._message_payload())
 
     def _send_text(self, text: str) -> None:
         """P3-5: 外部（如桌宠嗅图标）直接发文本，跳过 input 清空逻辑。"""
@@ -908,6 +984,19 @@ class ChatWindow(ChatBaseWindow):
         self._save_conversation()
 
     def _on_state(self, state: str, _preview: str = ""):
+        agent = getattr(self._find_main_app(), "agent", None)
+        tools_running = bool(getattr(agent, "_tools_running", 0))
+        files_running = bool(getattr(agent, "_file_busy", False))
+        if files_running:
+            self.set_tool_busy(True, "正在读取文件或文件夹")
+            if state == "idle":
+                state = "understanding"
+        elif state == "executing" or tools_running:
+            label = _preview if state == "executing" and _preview in {
+                "正在读取文件", "正在读取文件夹", "正在处理", "正在使用工具"} else ""
+            self.set_tool_busy(True, label)
+        else:
+            self.set_tool_busy(False)
         self._avatar_thinking = state in ("thinking", "understanding", "transcribing", "executing")
         self._refresh_pet_avatar()
         if state == "thinking" and self._typing_widget is not None:
@@ -1005,6 +1094,7 @@ class ChatWindow(ChatBaseWindow):
 
     def _clear(self):
         self._stop_generation()
+        self.set_tool_busy(False)
         self._dismiss_error()
         self.messages.clear()
         self._streaming = False
@@ -1092,7 +1182,20 @@ class ChatWindow(ChatBaseWindow):
             self._set_generating(True)
             self._typing_widget = _TypingBubble()
             self._append_widget(self._typing_widget)
-            self.bridge.send([dict(message) for message in self.messages])
+            self.bridge.send(self._message_payload())
+
+    def _message_payload(self):
+        from bridge import local_read_request
+        if self.messages and self.messages[-1].get("role") == "user":
+            latest = self.messages[-1]
+            content = latest.get("content", "")
+            if self.bridge.temporary_context:
+                latest["attachment_context_id"] = self.bridge.remember_attachment(self.bridge.temporary_context)
+                self.bridge.temporary_context = ""
+                latest["external_context"] = True
+            if isinstance(content, str) and (local_read_request(content) or "```" in content or "~~~" in content):
+                latest["external_context"] = True
+        return [dict(message) for message in self.messages]
 
     def closeEvent(self, event):
         """Save conversation on window close."""
@@ -1120,7 +1223,8 @@ class ChatWindow(ChatBaseWindow):
         urls = event.mimeData().urls()
         if not urls:
             return
-        paths = [u.toLocalFile() for u in urls if u.toLocalFile() and os.path.isfile(u.toLocalFile())]
+        paths = [path for url in urls if (path := url.toLocalFile())
+                 and (os.path.isfile(path) or os.path.isdir(path))]
         if not paths:
             return
         self._on_dropped_files(paths)
@@ -1140,6 +1244,11 @@ class ChatWindow(ChatBaseWindow):
             return
         # 追加到现有文本
         for path in kept:
+            if os.path.isdir(path):
+                new = f"[文件夹: {os.path.basename(path)}] {path}"
+                cur = self._input.toPlainText().strip()
+                self._input.setPlainText((cur + "\n" + new) if cur else new)
+                continue
             try:
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read(8000)

@@ -309,6 +309,7 @@ class BuddyDeskApp:
         self._apply_pet_settings(new_config)
         if self.chat:
             self.chat._on_state("thinking" if self.chat._streaming else "idle")
+            self.chat.refresh_access_mode()
         if self.winisland:
             self.winisland.refresh_pet()
 

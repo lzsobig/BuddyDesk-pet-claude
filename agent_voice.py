@@ -26,7 +26,7 @@ NOISE_THRESHOLD_FLOOR = 0.0075
 NOISE_MULTIPLIER = 3.0
 PRE_ROLL_BLOCKS = 16
 
-_ASR_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-voice-asr")
+_ASR_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-voice-asr")
 _LOCAL_ASR_LOCK = threading.Lock()
 
 
@@ -80,6 +80,7 @@ class AgentVoice(QObject):
         self._audio_queue: queue.Queue[tuple[np.ndarray, float]] = queue.Queue(maxsize=256)
         self._capture_error = ""
         self._active_task: tuple[int, str] | None = None
+        self._active_future: Future[str] | None = None
         self._pending_final: tuple[int, np.ndarray, dict] | None = None
 
         self._capture_timer = QTimer(self)
@@ -176,6 +177,10 @@ class AgentVoice(QObject):
         self._recording = False
         self._close_stream()
         self._generation += 1
+        if self._active_future is not None:
+            self._active_future.cancel()
+        self._active_future = None
+        self._active_task = None
         self._pending_final = None
         self._processing = False
         self._reset_capture()
@@ -312,6 +317,7 @@ class AgentVoice(QObject):
     def _submit_asr(self, generation: int, kind: str, audio: np.ndarray, settings: dict) -> None:
         self._active_task = (generation, kind)
         future = _ASR_EXECUTOR.submit(_transcribe, audio, settings)
+        self._active_future = future
         future.add_done_callback(
             lambda completed: self._publish_asr_result(
                 completed, generation, kind, settings
@@ -325,17 +331,23 @@ class AgentVoice(QObject):
         kind: str,
         settings: dict,
     ) -> None:
+        if future.cancelled():
+            return
         try:
             text = future.result().strip()
             error = ""
         except Exception as exception:
             text = ""
             error = self._safe_error(exception, settings)
-        self._asr_finished.emit(generation, kind, text, error)
+        try:
+            self._asr_finished.emit(generation, kind, text, error)
+        except RuntimeError:
+            pass
 
     def _on_asr_finished(self, generation: int, kind: str, text: str, error: str) -> None:
         if self._active_task == (generation, kind):
             self._active_task = None
+            self._active_future = None
 
         pending_final = self._pending_final
         if pending_final is not None:

@@ -216,6 +216,15 @@ class SettingsPanel(QDialog):
         form.setContentsMargins(0, 0, 0, 0)
         form.setSpacing(10)
         sections.addWidget(self._preferences_page)
+        self._access_mode = SettingsCombo()
+        self._access_mode.addItem("逐次确认", "confirm")
+        self._access_mode.addItem("完全访问本机", "full")
+        self._access_mode.setCurrentIndex(1 if self._config.get("agent_access_mode") == "full" else 0)
+        form.addWidget(_make_field_row("访问权限", self._access_mode))
+        access_hint = QLabel("逐次确认：执行本机操作前先询问。\n完全访问：允许助手直接打开程序、操作本地文件和执行命令，权限受当前 Windows 账户限制。\n涉及附件内容的操作仍会核对，任务清单继续保留确认步骤。")
+        access_hint.setWordWrap(True)
+        access_hint.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
+        form.addWidget(access_hint)
         self._sound_cb = SettingSwitch("声音提示")
         self._sound_cb.toggled.connect(self._on_sound_master_toggled)
         self._clipboard_cb = SettingSwitch("剪贴板监听")
@@ -633,13 +642,20 @@ class SettingsPanel(QDialog):
             self._model_input.setText(p["model"])
 
     def _save(self):
+        access_mode = self._access_mode.currentData()
         try:
             voice = self._voice_page.values()
         except ValueError as error:
             QMessageBox.warning(self, "语音设置", str(error))
             self._select_settings_page(2)
             return
+        if access_mode == "full" and self._config.get("agent_access_mode", "confirm") != "full":
+            if QMessageBox.question(self, "启用完全访问", "开启后，助手可以直接执行本机命令和文件操作。\n请仅对你信任的模型与服务开启；可随时在这里切回逐次确认。",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
         self._config.update(voice)
+        self._config["agent_access_mode"] = access_mode
         self._config.update(self._pet_page.values())
         self._config["backend"] = self._backend_combo.currentData()
         self._config["openai_api_key"] = self._apikey_input.text().strip()
