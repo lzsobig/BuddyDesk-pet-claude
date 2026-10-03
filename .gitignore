@@ -54,3 +54,6 @@ restore_windows.ps1
 *.ps1
 !/winisland/packaging/**/*.ps1
 !启动 BuddyDesk.vbs
+
+# Local browser previews
+.playwright-cli/

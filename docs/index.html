@@ -1,1174 +1,699 @@
-<!DOCTYPE html>
-<html lang="en" class="no-js">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BuddyDesk — a pixel cat, a hotkey, a different computer</title>
-  <meta name="description" content="BuddyDesk is a pixel cat that lives on your taskbar. Press Ctrl+Shift+H to open apps, run commands, and call Claude. Then she goes back to napping.">
-  <meta property="og:title" content="BuddyDesk — a pixel cat, a hotkey, a different computer">
-  <meta property="og:description" content="A desktop pet that runs your commands, opens your apps, and calls your AI. Press Ctrl+Shift+H from anywhere.">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://lzsobig.github.io/BuddyDesk-pet-claude/">
-  <meta property="og:image" content="https://lzsobig.github.io/BuddyDesk-pet-claude/assets/01-launcher.png">
-  <meta name="twitter:card" content="summary_large_image">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='80'>🐱</text></svg>">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bricolage+Grotesque:ital,opsz,wght@0,12..96,400;0,12..96,600;0,12..96,700;0,12..96,800;1,12..96,500;1,12..96,700&family=JetBrains+Mono:wght@400;500;600&family=VT323&display=swap" rel="stylesheet">
-  <script>document.documentElement.classList.replace('no-js', 'js');</script>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    .no-js .text-layer, .no-js .brain { opacity: 1 !important; transform: none !important; }
-    .js .text-layer { opacity: 0; transform: scale(0.5); transform-origin: 50% 50%; }
-    .js .brain { opacity: 0; transform: translateY(20px); }
-
-    :root {
-      --bg: #f5f1e8; --bg-deep: #efeadd; --bg-card: #fffdf7;
-      --ink: #1a1a1a; --ink-2: #3d3a30; --ink-3: #6b6859; --ink-4: #9a968a;
-      --line: #d9d4c5; --line-soft: #e8e3d4;
-      --sage: #5cb89a; --sage-d: #3e9a7c; --sage-soft: rgba(92,184,154,0.12);
-      --orange: #e87b3e; --orange-soft: rgba(232,123,62,0.12);
-      --black: #0a0a0a;
-      --radius: 14px; --radius-lg: 24px;
-      --shadow-sm: 0 1px 2px rgba(40,30,10,0.05);
-      --shadow-md: 0 2px 6px rgba(40,30,10,0.06), 0 12px 32px rgba(40,30,10,0.08);
-      --shadow-lg: 0 4px 12px rgba(40,30,10,0.08), 0 24px 60px rgba(40,30,10,0.12);
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
-    }
-
-    html { scroll-behavior: smooth; scroll-padding-top: 72px; }
-    body {
-      font-family: 'Inter', sans-serif;
-      background: var(--bg);
-      color: var(--ink);
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      line-height: 1.5;
-      overflow-x: hidden;
-    }
-
-    .container { max-width: 1240px; margin: 0 auto; padding: 0 32px; }
-
-    /* ========== NAV ========== */
-    .site-nav {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-      padding: 14px 0;
-      background: rgba(245,241,232,0.72);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      border-bottom: 1px solid var(--line);
-    }
-    .nav-row { display: flex; align-items: center; gap: 32px; }
-
-    .nav-brand {
-      display: flex; align-items: center; gap: 10px;
-      text-decoration: none; color: var(--ink);
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-weight: 700; font-size: 18px; letter-spacing: -0.025em;
-    }
-    .brand-mark {
-      width: 14px; height: 14px;
-      background: var(--orange); border-radius: 4px;
-      display: inline-block; transform: rotate(-6deg);
-    }
-    .nav-brand .ver {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 10px; color: var(--ink-4);
-      margin-left: 4px; font-weight: 500; letter-spacing: 0.05em;
-    }
-
-    .nav-links {
-      list-style: none; display: flex; gap: 2px;
-      margin: 0 auto; padding: 0;
-    }
-    .nav-links a {
-      display: inline-flex; align-items: center; gap: 8px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; font-weight: 500; color: var(--ink-3);
-      text-decoration: none; letter-spacing: 0.02em;
-      padding: 8px 12px; border-radius: 8px;
-      transition: color 0.2s, background 0.2s;
-    }
-    .nav-links a:hover { color: var(--ink); background: rgba(0,0,0,0.04); }
-    .nav-links a.active { color: var(--ink); background: rgba(0,0,0,0.06); }
-    .nav-links a.active .num { color: var(--sage-d); }
-    .nav-links .num { color: var(--ink-4); font-size: 10px; letter-spacing: 0.05em; }
-
-    .nav-cta {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; font-weight: 500; color: #f5f1e8;
-      text-decoration: none; padding: 9px 16px;
-      background: var(--ink); border-radius: 999px;
-      letter-spacing: 0.04em; transition: background 0.2s, transform 0.2s;
-    }
-    .nav-cta:hover { background: var(--sage-d); transform: translateY(-1px); }
-    .nav-cta .arrow { display: inline-block; transition: transform 0.2s; }
-    .nav-cta:hover .arrow { transform: translate(2px, -2px); }
-
-    .mobile-toggle {
-      display: none; background: none; border: none; cursor: pointer;
-      padding: 8px; color: var(--ink);
-    }
-    .mobile-toggle svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; }
-
-    @media (max-width: 900px) {
-      .nav-links { display: none; }
-      .nav-row { justify-content: space-between; }
-      .mobile-toggle { display: flex; }
-      .nav-links.open {
-        display: flex; flex-direction: column;
-        position: absolute; top: 100%; left: 0; right: 0;
-        background: rgba(245,241,232,0.96);
-        backdrop-filter: blur(20px);
-        padding: 12px 32px 16px; gap: 4px;
-        border-bottom: 1px solid var(--line);
-      }
-    }
-
-    /* ========== HERO ========== */
-    .hero-wrapper { position: relative; height: 220vh; }
-    .hero-sticky {
-      position: sticky; top: 0; width: 100%; height: 100vh;
-      background: var(--bg);
-      display: flex; align-items: center; justify-content: center;
-      overflow: hidden;
-    }
-    .image-stack {
-      position: absolute; top: 50%; left: 50%;
-      width: 360px; height: 254px;
-      transform: translate(-50%, -50%);
-      z-index: 2; pointer-events: none;
-    }
-    .card-wrap {
-      position: absolute; top: 0; left: 0;
-      width: 360px; height: 254px;
-      will-change: transform;
-    }
-    .card {
-      position: relative; width: 100%; height: 100%;
-      border-radius: 16px; overflow: hidden;
-      box-shadow: 0 6px 24px rgba(0,0,0,0.2);
-      background: var(--bg-deep);
-      cursor: pointer; pointer-events: auto;
-      will-change: transform;
-    }
-    .card img { width: 100%; height: 100%; object-fit: contain; display: block; padding: 8px; }
-
-    .text-layer {
-      position: relative; z-index: 1;
-      text-align: center; max-width: 980px;
-      padding: 0 24px; pointer-events: none;
-    }
-    .text-layer h1 {
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: clamp(3rem, 7.5vw, 6.25rem);
-      font-weight: 800; line-height: 0.92;
-      letter-spacing: -0.05em; color: var(--ink);
-      margin-bottom: 28px;
-    }
-    .text-layer h1 em { font-style: italic; font-weight: 500; color: var(--sage-d); }
-    .text-layer p {
-      font-size: 15px; line-height: 1.6; color: var(--ink-3);
-      max-width: 480px; margin: 0 auto 32px;
-    }
-    .text-layer p strong {
-      color: var(--ink-2);
-      font-family: 'JetBrains Mono', monospace; font-size: 13px;
-      background: var(--bg-card); padding: 2px 8px;
-      border-radius: 6px; border: 1px solid var(--line-soft);
-    }
-
-    .cta {
-      display: inline-flex; align-items: center; gap: 10px;
-      background: var(--ink); color: #f5f1e8;
-      font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
-      padding: 16px 28px; border: none; border-radius: 999px;
-      cursor: pointer; pointer-events: auto;
-      text-decoration: none;
-      transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-    }
-    .cta:hover { background: var(--sage-d); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(62,154,124,0.25); }
-    .cta .arrow { display: inline-block; transition: transform 0.2s; }
-    .cta:hover .arrow { transform: translateX(3px); }
-
-    .status-bar {
-      position: absolute; bottom: 24px; left: 32px; right: 32px;
-      display: flex; justify-content: space-between; align-items: center;
-      z-index: 5; font-size: 12px; font-weight: 500; color: var(--ink-3);
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .status-bar a { color: inherit; text-decoration: none; transition: color 0.2s; }
-    .status-bar a:hover { color: var(--ink); }
-    .status { display: flex; align-items: center; gap: 8px; }
-    .dot {
-      width: 8px; height: 8px; background: var(--sage);
-      border-radius: 50%; box-shadow: 0 0 0 3px var(--sage-soft);
-      animation: pulse 2.4s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 3px rgba(92,184,154,0.18); }
-      50%      { box-shadow: 0 0 0 6px rgba(92,184,154,0.04); }
-    }
-
-    /* ========== SECTION CHROME ========== */
-    .section { padding: 140px 0; position: relative; }
-    .section.alt  { background: var(--bg-deep); }
-    .section.dark { background: var(--black); color: #f5f1e8; }
-
-    .eyebrow {
-      display: inline-flex; align-items: center; gap: 8px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px; font-weight: 500;
-      letter-spacing: 0.1em; text-transform: uppercase;
-      color: var(--sage-d); margin-bottom: 28px;
-    }
-    .eyebrow::before { content: ""; width: 24px; height: 1px; background: currentColor; }
-    .section.dark .eyebrow { color: var(--sage); }
-
-    .display {
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-weight: 800; line-height: 0.92;
-      letter-spacing: -0.045em; color: var(--ink);
-    }
-    .display em { font-style: italic; font-weight: 500; color: var(--orange); }
-
-    /* ========== THE CAT ========== */
-    .cat-section { padding: 100px 0 140px; }
-    .cat-grid {
-      display: grid; grid-template-columns: 1.1fr 0.9fr;
-      gap: 80px; align-items: center;
-    }
-    .cat-headline { font-size: clamp(3.5rem, 8vw, 7.5rem); margin-bottom: 32px; }
-
-    .cat-quote {
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-style: italic;
-      font-size: clamp(1.25rem, 1.6vw, 1.5rem);
-      font-weight: 500; line-height: 1.4; color: var(--ink-2);
-      border-left: 2px solid var(--orange);
-      padding-left: 24px; margin: 40px 0 32px; max-width: 460px;
-    }
-    .cat-quote::before {
-      content: "\201C"; font-size: 2em; color: var(--orange);
-      line-height: 0; margin-right: 4px; vertical-align: -0.2em;
-    }
-
-    .moods { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
-    .mood {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; letter-spacing: 0.04em;
-      padding: 8px 14px; border: 1px solid var(--line);
-      border-radius: 999px; color: var(--ink-2); background: var(--bg-card);
-      cursor: pointer; transition: all 0.3s ease;
-    }
-    .mood:hover { border-color: var(--orange); }
-    .mood.active { background: var(--orange-soft); border-color: var(--orange); color: var(--orange); }
-
-    .cat-stage {
-      position: relative;
-      background: var(--bg-card);
-      border-radius: 24px; border: 1px solid var(--line);
-      box-shadow: var(--shadow-md);
-      display: flex; align-items: center; justify-content: center;
-      overflow: hidden; padding: 12px;
-    }
-    .cat-stage img {
-      position: relative; display: block;
-      width: auto; max-width: 100%; max-height: 50vh;
-      border-radius: 12px; image-rendering: auto;
-      transition: transform 0.4s ease;
-    }
-
-    /* ========== MARQUEE ========== */
-    .marquee {
-      overflow: hidden; padding: 24px 0;
-      border-top: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      background: var(--bg);
-    }
-    .marquee-track {
-      display: flex; gap: 48px;
-      animation: marquee 30s linear infinite;
-      white-space: nowrap;
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-style: italic; font-weight: 500;
-      font-size: 28px; color: var(--ink-3);
-    }
-    .marquee-track span { display: inline-flex; align-items: center; gap: 48px; }
-    .marquee-track span::after {
-      content: "\2726"; color: var(--orange);
-      font-size: 14px; font-style: normal;
-    }
-    @keyframes marquee {
-      from { transform: translateX(0); }
-      to   { transform: translateX(-50%); }
-    }
-
-    /* ========== THE HOTKEY ========== */
-    .hotkey-grid {
-      display: grid; grid-template-columns: 1.1fr 1fr;
-      gap: 80px; align-items: center;
-    }
-    .hotkey-display { font-size: clamp(3.5rem, 7vw, 6.5rem); margin-bottom: 24px; }
-    .hotkey-body { font-size: 17px; line-height: 1.6; color: var(--ink-2); max-width: 480px; }
-
-    .key-cluster {
-      position: relative;
-      background: var(--bg-card);
-      border-radius: 32px; border: 1px solid var(--line);
-      box-shadow: var(--shadow-md);
-      padding: 56px 40px;
-      display: flex; align-items: center; justify-content: center; gap: 12px;
-      flex-wrap: wrap; cursor: pointer;
-      transition: box-shadow 0.3s ease;
-    }
-    .key-cluster:hover { box-shadow: var(--shadow-lg); }
-    .key {
-      display: flex; align-items: center; justify-content: center;
-      min-width: 92px; height: 92px; padding: 0 20px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 18px; font-weight: 500; color: var(--ink);
-      background: var(--bg); border: 1.5px solid var(--line);
-      border-radius: 14px;
-      box-shadow: 0 4px 0 var(--line), 0 6px 12px rgba(0,0,0,0.04);
-      transition: transform 0.12s, box-shadow 0.12s, background 0.2s, border-color 0.2s, color 0.2s;
-      will-change: transform; user-select: none;
-    }
-    .key.pressed {
-      transform: translateY(4px);
-      box-shadow: 0 0 0 var(--line), 0 2px 4px rgba(0,0,0,0.04);
-      background: var(--sage-soft); border-color: var(--sage); color: var(--sage-d);
-    }
-    .key-plus {
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-weight: 300; font-size: 36px; color: var(--ink-4);
-    }
-
-    .hotkey-caption {
-      margin-top: 32px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; color: var(--ink-3);
-      letter-spacing: 0.04em; text-align: center;
-    }
-    .hotkey-caption .sage { color: var(--sage-d); }
-
-    /* ========== IN CONVERSATION ========== */
-    .chat-section .section-head { text-align: center; margin-bottom: 80px; }
-    .chat-section .display { font-size: clamp(3rem, 6.5vw, 5.5rem); }
-
-    .chat-window {
-      max-width: 720px; margin: 0 auto;
-      background: var(--bg-card);
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--line);
-      box-shadow: var(--shadow-lg); overflow: hidden;
-    }
-    .chat-bar {
-      display: flex; align-items: center; gap: 8px;
-      padding: 14px 20px; border-bottom: 1px solid var(--line-soft);
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; color: var(--ink-3);
-    }
-    .chat-bar .dot-r { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
-    .chat-bar .dot-y { width: 10px; height: 10px; border-radius: 50%; background: #febc2e; }
-    .chat-bar .dot-g { width: 10px; height: 10px; border-radius: 50%; background: #28c840; }
-    .chat-bar .title { margin-left: 12px; }
-
-    .chat-stream { padding: 32px; display: flex; flex-direction: column; gap: 18px; }
-
-    .bubble {
-      max-width: 80%; padding: 12px 18px;
-      border-radius: 18px; font-size: 15px; line-height: 1.5;
-    }
-    .bubble.user {
-      align-self: flex-end; background: var(--ink); color: var(--bg);
-      border-bottom-right-radius: 6px;
-    }
-    .bubble.user::before {
-      content: "you said \00b7 ";
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px; opacity: 0.5; margin-right: 4px;
-    }
-    .bubble.bot {
-      align-self: flex-start; background: var(--bg); color: var(--ink);
-      border-bottom-left-radius: 6px; border: 1px solid var(--line-soft);
-    }
-    .bubble .tag {
-      display: inline-block;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px; color: var(--sage-d); background: var(--sage-soft);
-      padding: 2px 8px; border-radius: 6px; margin-bottom: 6px;
-    }
-    .bubble pre {
-      margin-top: 10px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; background: var(--ink); color: #c4d4cc;
-      padding: 12px 16px; border-radius: 10px;
-      overflow-x: auto; line-height: 1.6;
-    }
-    .bubble.system {
-      align-self: center;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px; color: var(--ink-4);
-      background: transparent; padding: 4px 12px;
-      border: 1px dashed var(--line);
-    }
-
-    /* ========== A BUDDY (editorial list) ========== */
-    .buddy-section .display { font-size: clamp(3rem, 6vw, 5rem); max-width: 14ch; }
-    .buddy-section .section-lede { font-size: 17px; color: var(--ink-2); max-width: 480px; }
-
-    .brain-list { list-style: none; margin-top: 80px; border-top: 1px solid var(--line); }
-
-    .brain {
-      display: grid; grid-template-columns: 48px 1fr auto;
-      column-gap: 40px; align-items: start;
-      padding: 36px 0; border-bottom: 1px solid var(--line);
-      position: relative; transition: padding-left 0.3s ease, background 0.3s ease;
-      cursor: default;
-    }
-    .brain:hover { padding-left: 20px; background: rgba(0,0,0,0.015); }
-
-    .brain-id {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 13px; color: var(--ink-4);
-      padding-top: 16px; letter-spacing: 0.05em;
-    }
-    .brain-main { min-width: 0; }
-    .brain-name {
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: clamp(2rem, 3.2vw, 2.75rem);
-      font-weight: 800; letter-spacing: -0.04em;
-      line-height: 1; color: var(--ink); margin-bottom: 14px;
-    }
-    .brain-role {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 13px; font-weight: 400;
-      color: var(--ink-4); letter-spacing: 0.04em;
-    }
-    .brain-desc {
-      font-size: 16px; line-height: 1.55;
-      color: var(--ink-3); max-width: 540px;
-    }
-    .brain-tag {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; letter-spacing: 0.05em;
-      color: var(--ink-3); padding-top: 18px;
-      text-align: right; white-space: nowrap;
-    }
-    .brain-tag .ar { color: var(--sage-d); margin-right: 4px; }
-
-    .brain-feat .brain-name { color: var(--orange); }
-    .brain-feat .brain-tag .ar { color: var(--orange); }
-    .brain-feat .brain-id::after {
-      content: ""; display: inline-block;
-      width: 6px; height: 6px; margin-left: 6px;
-      background: var(--orange); border-radius: 50%;
-      vertical-align: middle; transform: translateY(-1px);
-    }
-
-    /* ========== INSTALL ========== */
-    .install-section { padding: 140px 0; }
-    .install-grid {
-      display: grid; grid-template-columns: 1fr 1.1fr;
-      gap: 80px; align-items: center;
-    }
-    .install-headline { font-size: clamp(3.5rem, 7vw, 6rem); margin-bottom: 24px; }
-    .install-body { font-size: 17px; line-height: 1.6; color: rgba(255,255,255,0.6); max-width: 420px; }
-    .install-body strong { color: var(--sage); font-weight: 500; }
-
-    .terminal {
-      background: #0d0d0d; border: 1px solid #2a2a2a;
-      border-radius: 16px; overflow: hidden;
-      box-shadow: 0 0 0 1px #1a1a1a, 0 30px 80px rgba(0,0,0,0.4);
-      min-width: 0;
-    }
-    .terminal-bar {
-      display: flex; align-items: center; gap: 8px;
-      padding: 14px 18px; background: #161616;
-      border-bottom: 1px solid #2a2a2a;
-      min-width: 0;
-    }
-    .terminal-bar span { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-    .terminal-bar span:nth-child(1) { background: #ff5f57; }
-    .terminal-bar span:nth-child(2) { background: #febc2e; }
-    .terminal-bar span:nth-child(3) { background: #28c840; }
-    .terminal-bar .label {
-      margin-left: auto;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; color: #6a6a6a;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      min-width: 0; flex-shrink: 1;
-    }
-
-    .terminal-body {
-      padding: 24px 20px;
-      font-family: 'VT323', monospace;
-      font-size: 17px; line-height: 1.7;
-      color: #d4d4d4;
-      overflow-x: auto;
-    }
-    .terminal-body::-webkit-scrollbar { height: 6px; }
-    .terminal-body::-webkit-scrollbar-track { background: #161616; }
-    .terminal-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
-    .terminal-body .ps { color: var(--sage); margin-right: 8px; user-select: none; }
-    .terminal-body .cm { color: #6a6a6a; }
-    .terminal-body .hl { color: #e87b3e; }
-    .terminal-body .ok { color: var(--sage); }
-    .terminal-body .tl { white-space: nowrap; }
-
-    .install-actions { display: flex; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
-    .install-actions .cta.on-dark { background: var(--sage); }
-    .install-actions .cta.on-dark:hover { background: #6dc9aa; box-shadow: 0 8px 24px rgba(92,184,154,0.3); }
-    .install-actions .cta.ghost {
-      background: transparent; color: rgba(255,255,255,0.7);
-      border: 1px solid rgba(255,255,255,0.15);
-    }
-    .install-actions .cta.ghost:hover { color: #fff; border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.05); }
-
-    .reqs {
-      display: flex; gap: 28px; flex-wrap: wrap;
-      margin-top: 40px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; color: rgba(255,255,255,0.4);
-    }
-    .reqs span::before { content: "// "; color: var(--sage); }
-
-    /* ========== FOOTER ========== */
-    footer.site-footer {
-      background: var(--bg-deep);
-      border-top: 1px solid var(--line);
-      padding: 56px 0 40px;
-    }
-    .footer-row {
-      display: flex; justify-content: space-between; align-items: center;
-      flex-wrap: wrap; gap: 24px;
-    }
-    .footer-brand {
-      display: flex; align-items: center; gap: 12px;
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: 22px; font-weight: 700; color: var(--ink);
-    }
-    .footer-mark {
-      width: 32px; height: 32px;
-      background: var(--orange); border-radius: 8px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px;
-    }
-    .footer-links { display: flex; gap: 28px; font-size: 14px; }
-    .footer-links a { color: var(--ink-3); text-decoration: none; transition: color 0.2s; }
-    .footer-links a:hover { color: var(--ink); }
-    .footer-fine {
-      margin-top: 32px; font-size: 12px; color: var(--ink-4);
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .footer-fine em {
-      font-family: 'Bricolage Grotesque', serif;
-      font-style: italic; font-size: 14px; color: var(--ink-3);
-    }
-
-    /* ========== SCROLL INDICATOR ========== */
-    .scroll-hint {
-      position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
-      display: flex; flex-direction: column; align-items: center; gap: 8px;
-      color: var(--ink-4);
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px; letter-spacing: 0.06em;
-      animation: hintFloat 2s ease-in-out infinite;
-      z-index: 4;
-    }
-    .scroll-hint .chevron {
-      width: 20px; height: 20px;
-      border-right: 1.5px solid var(--ink-4);
-      border-bottom: 1.5px solid var(--ink-4);
-      transform: rotate(45deg); margin-top: -6px;
-    }
-    @keyframes hintFloat {
-      0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.6; }
-      50%      { transform: translateX(-50%) translateY(6px); opacity: 1; }
-    }
-
-    /* ========== BRAIN ACCENT BAR ========== */
-    .brain::before {
-      content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-      width: 3px; border-radius: 3px;
-      background: var(--sage); opacity: 0; transition: opacity 0.3s ease;
-    }
-    .brain:hover::before { opacity: 1; }
-    .brain-feat::before { background: var(--orange) !important; }
-
-    /* ========== CTA PULSE ========== */
-    .cta.pulse {
-      animation: ctaPulse 3s ease-in-out infinite;
-    }
-    @keyframes ctaPulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(92,184,154,0); }
-      50%      { box-shadow: 0 0 0 10px rgba(92,184,154,0.15); }
-    }
-    .cta.pulse:hover { animation: none; }
-
-    /* ========== TERMINAL LINE ANIMATION ========== */
-    .terminal-body .tl { opacity: 0; transform: translateY(6px); }
-    .terminal-body .tl.visible { opacity: 1; transform: translateY(0); transition: opacity 0.3s ease, transform 0.3s ease; }
-
-    /* ========== TOAST ========== */
-    .toast {
-      position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%) translateY(20px);
-      background: var(--ink); color: #f5f1e8;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 13px; padding: 12px 24px;
-      border-radius: 12px; box-shadow: var(--shadow-lg);
-      opacity: 0; transition: all 0.3s ease; z-index: 200;
-      pointer-events: none;
-    }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-    /* ========== RESPONSIVE ========== */
-    @media (max-width: 980px) {
-      .cat-grid, .hotkey-grid, .install-grid { grid-template-columns: 1fr; gap: 48px; }
-      .section { padding: 80px 0; }
-      .cat-section { padding: 60px 0 80px; }
-      .brain { grid-template-columns: 32px 1fr; column-gap: 24px; }
-      .brain-tag { grid-column: 2; text-align: left; padding-top: 8px; }
-    }
-    @media (max-width: 600px) {
-      .image-stack, .card-wrap, .card { width: 240px; height: 170px; }
-      .image-stack { width: 240px; height: 170px; }
-      .text-layer h1 { font-size: clamp(2.4rem, 11vw, 3.5rem); }
-      .status-bar { left: 16px; right: 16px; bottom: 16px; font-size: 11px; }
-      .container { padding: 0 20px; }
-      .key { min-width: 72px; height: 72px; font-size: 14px; }
-      .key-plus { font-size: 28px; }
-      .brain { padding: 28px 0; }
-      .brain:hover { padding-left: 8px; }
-      .bubble { max-width: 90%; }
-      .chat-stream { padding: 20px; }
-    }
-  </style>
-</head>
-<body>
-
-  <!-- NAV -->
-  <nav class="site-nav" aria-label="Primary">
-    <div class="container nav-row">
-      <a href="#top" class="nav-brand">
-        <span class="brand-mark"></span>
-        BuddyDesk
-        <span class="ver">v0.2.1</span>
-      </a>
-      <ul class="nav-links" id="navLinks">
-        <li><a href="#cat"><span class="num">01</span> the cat</a></li>
-        <li><a href="#hotkey"><span class="num">02</span> hotkey</a></li>
-        <li><a href="#chat"><span class="num">03</span> talk</a></li>
-        <li><a href="#brain"><span class="num">04</span> brain</a></li>
-        <li><a href="#install"><span class="num">05</span> install</a></li>
-      </ul>
-      <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener" class="nav-cta">github <span class="arrow">&#x2197;</span></a>
-      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle navigation" aria-expanded="false">
-        <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round"/></svg>
-      </button>
-    </div>
-  </nav>
-
-  <!-- HERO -->
-  <section class="hero-wrapper" id="top">
-    <div class="hero-sticky" style="padding-top: 72px;">
-      <div class="image-stack" aria-hidden="true">
-        <div class="card-wrap"><div class="card"><img src="assets/01-launcher.png" alt=""></div></div>
-        <div class="card-wrap"><div class="card"><img src="assets/02-sleep.png" alt=""></div></div>
-        <div class="card-wrap"><div class="card"><img src="assets/03-happy.png" alt=""></div></div>
-        <div class="card-wrap"><div class="card"><img src="assets/04-thinking.png" alt=""></div></div>
-        <div class="card-wrap"><div class="card"><img src="assets/05-idle.png" alt=""></div></div>
-      </div>
-
-      <div class="text-layer">
-        <h1>A pixel cat.<br>A hotkey.<br><em>A different computer.</em></h1>
-        <p>BuddyDesk lives on your taskbar. Press <strong>Ctrl+Shift+H</strong> from anywhere. She opens apps, runs commands, calls Claude. Then goes back to napping.</p>
-        <a href="#install" class="cta pulse">Adopt a cat <span class="arrow">&rarr;</span></a>
-      </div>
-
-      <div class="status-bar">
-        <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener">github / lzsobig / BuddyDesk</a>
-        <div class="status">
-          <span class="dot"></span>
-          <span>v0.2.1 &middot; MIT</span>
-        </div>
-      </div>
-
-      <div class="scroll-hint" id="scrollHint">
-        <span>scroll</span>
-        <div class="chevron"></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- THE CAT -->
-  <section class="section cat-section" id="cat">
-    <div class="container">
-      <div class="cat-grid">
-        <div>
-          <div class="eyebrow">01 &middot; the cat</div>
-          <h2 class="display cat-headline">She has <em>seven</em><br>moods.</h2>
-          <p class="cat-quote">She walks when you walk away. She naps when you nap. She listens when you double-click.</p>
-          <div class="moods" id="moodSwitcher">
-            <span class="mood active" data-mood="idle">idle</span>
-            <span class="mood" data-mood="walk">walk</span>
-            <span class="mood" data-mood="happy">happy</span>
-            <span class="mood" data-mood="sleep">sleep</span>
-            <span class="mood" data-mood="love">love</span>
-            <span class="mood" data-mood="thinking">thinking</span>
-            <span class="mood" data-mood="error">error</span>
-          </div>
-        </div>
-        <div class="cat-stage">
-          <img src="assets/cat_idle.png" alt="Pixel cat idle" id="catImage">
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- MARQUEE -->
-  <div class="marquee" aria-hidden="true">
-    <div class="marquee-track">
-      <span>open wechat</span><span>check my ip</span><span>write a snake game</span><span>close chrome</span><span>what's the weather</span><span>delete the build folder</span>
-      <span>open wechat</span><span>check my ip</span><span>write a snake game</span><span>close chrome</span><span>what's the weather</span><span>delete the build folder</span>
-    </div>
-  </div>
-
-  <!-- THE HOTKEY -->
-  <section class="section alt" id="hotkey">
-    <div class="container">
-      <div class="hotkey-grid">
-        <div>
-          <div class="eyebrow">02 &middot; the hotkey</div>
-          <h2 class="display hotkey-display">Ctrl+<em>Shift</em>+H</h2>
-          <p class="hotkey-body">No dock. No menu. No browser tab to find. One keystroke from any app, and she slides down from the top. Press the same key to send her back. Your context never moves.</p>
-        </div>
-        <div>
-          <div class="key-cluster" id="keyCluster">
-            <div class="key" data-key="ctrl">Ctrl</div>
-            <span class="key-plus">+</span>
-            <div class="key" data-key="shift">Shift</div>
-            <span class="key-plus">+</span>
-            <div class="key" data-key="h">H</div>
-          </div>
-          <div class="hotkey-caption">
-            <span class="sage">&#x25b8; tap</span> &nbsp; she appears &nbsp;&middot;&nbsp; <span class="sage">&#x25b8; tap again</span> &nbsp; she's gone
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- IN CONVERSATION -->
-  <section class="section chat-section" id="chat">
-    <div class="container">
-      <div class="section-head">
-        <div class="eyebrow" style="justify-content:center">03 &middot; in conversation</div>
-        <h2 class="display">Talk to her like a <em>person</em>.</h2>
-      </div>
-
-      <div class="chat-window">
-        <div class="chat-bar">
-          <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
-          <span class="title">buddydesk &middot; chat</span>
-        </div>
-        <div class="chat-stream" id="chatStream">
-          <div class="bubble user chat-msg">Open WeChat</div>
-          <div class="bubble bot chat-msg">
-            <span class="tag">[APP:WeChat]</span><br>Launching WeChat. One moment.
-          </div>
-
-          <div class="bubble user chat-msg">Check my IP</div>
-          <div class="bubble bot chat-msg">
-            <span class="tag">[SHELL:ipconfig]</span><br>Running ipconfig&hellip;<br>
-            <pre>Windows IP Configuration
-
-Ethernet adapter Local Area Connection:
-   IPv4 Address. . . . . . . . : 192.168.1.100
-   Subnet Mask . . . . . . . . : 255.255.255.0
-   Default Gateway. . . . . . . : 192.168.1.1</pre>
-          </div>
-
-          <div class="bubble user chat-msg">Write a snake game</div>
-          <div class="bubble bot chat-msg">
-            <span class="tag">[CLAUDE:write snake in python]</span><br>Calling Claude Code. Drafting <code>snake_game.py</code> now.
-          </div>
-
-          <div class="bubble system chat-msg">-- three safety gates mean nothing dangerous runs without asking --</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- A BUDDY -->
-  <section class="section alt buddy-section" id="brain">
-    <div class="container">
-      <div class="eyebrow">04 &middot; whose brain</div>
-      <h2 class="display">She'll use whichever <em>brain</em> you trust.</h2>
-      <p class="section-lede">Swap them in the launcher. Bring your own API key, or run fully local. No vendor lock-in, ever.</p>
-
-      <ul class="brain-list">
-        <li class="brain brain-feat">
-          <div class="brain-id">01</div>
-          <div class="brain-main">
-            <h3 class="brain-name">Claude Code <span class="brain-role">// zero config</span></h3>
-            <p class="brain-desc">If you have Claude Code installed, BuddyDesk finds it automatically and uses it as the default brain. No API key, no setup, no friction.</p>
-          </div>
-          <div class="brain-tag"><span class="ar">&#x25b8;</span> best for most people</div>
-        </li>
-        <li class="brain">
-          <div class="brain-id">02</div>
-          <div class="brain-main">
-            <h3 class="brain-name">OpenAI <span class="brain-role">// compatible</span></h3>
-            <p class="brain-desc">Any OpenAI-compatible endpoint. Drop in a base URL and a key.</p>
-          </div>
-          <div class="brain-tag"><span class="ar">&#x25b8;</span> GPT-5.5 &middot; custom hosts</div>
-        </li>
-        <li class="brain">
-          <div class="brain-id">03</div>
-          <div class="brain-main">
-            <h3 class="brain-name">DeepSeek <span class="brain-role">// cheap &amp; capable</span></h3>
-            <p class="brain-desc">Surprisingly good, surprisingly cheap. A great default for budget work.</p>
-          </div>
-          <div class="brain-tag"><span class="ar">&#x25b8;</span> V4 &middot; still dirt cheap</div>
-        </li>
-        <li class="brain">
-          <div class="brain-id">04</div>
-          <div class="brain-main">
-            <h3 class="brain-name">Ollama <span class="brain-role">// 100% offline</span></h3>
-            <p class="brain-desc">Runs locally on your machine. Nothing leaves your laptop. Slower, but private.</p>
-          </div>
-          <div class="brain-tag"><span class="ar">&#x25b8;</span> llama 4 &middot; qwen 3 &middot; gemma 3</div>
-        </li>
-        <li class="brain">
-          <div class="brain-id">05</div>
-          <div class="brain-main">
-            <h3 class="brain-name">NVIDIA <span class="brain-role">// NIM endpoints</span></h3>
-            <p class="brain-desc">For when you want a hosted model that isn't OpenAI or Anthropic.</p>
-          </div>
-          <div class="brain-tag"><span class="ar">&#x25b8;</span> llama 4 &middot; mistral &middot; qwen 3</div>
-        </li>
-      </ul>
-    </div>
-  </section>
-
-  <!-- INSTALL -->
-  <section class="section dark install-section" id="install">
-    <div class="container">
-      <div class="install-grid">
-        <div>
-          <div class="eyebrow">05 &middot; bring her home</div>
-          <h2 class="display install-headline">Adopt a <em>cat</em>.</h2>
-          <p class="install-body">One clone. One double-click. She'll handle the dependencies, the Python detection, the rest. <strong>No installer wizard.</strong></p>
-          <div class="reqs">
-            <span>Windows 10 / 11</span>
-            <span>Python 3.10+</span>
-            <span>~ 60 MB</span>
-          </div>
-          <div class="install-actions">
-            <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener" class="cta on-dark">Open on GitHub <span class="arrow">&#x2197;</span></a>
-            <button class="cta ghost" id="copyBtn">Copy clone command</button>
-          </div>
-        </div>
-
-        <div class="terminal">
-          <div class="terminal-bar">
-            <span></span><span></span><span></span>
-            <span class="label">~/Desktop &mdash; powershell</span>
-          </div>
-          <div class="terminal-body">
-            <span class="tl"><span class="cm"># clone the repo</span><br><span class="ps">PS&gt;</span> git clone https://github.com/lzsobig/BuddyDesk-pet-claude.git<br><span class="ps">PS&gt;</span> <span class="hl">cd</span> BuddyDesk-pet-claude</span><br>
-            <br>
-            <span class="tl"><span class="cm"># double-click this &mdash; handles everything</span><br><span class="ps">PS&gt;</span> .\启动<span class="hl"> BuddyDesk</span>.bat</span><br>
-            <br>
-            <span class="tl"><span class="ok">&#x2714; Python 3.12 detected</span><br><span class="ok">&#x2714; PySide6 installed</span><br><span class="ok">&#x2714; Pixel cat is awake</span></span><br>
-            <br>
-            <span class="tl"><span class="cm"># or for zero terminal window:</span><br><span class="ps">PS&gt;</span> .\启动<span class="hl"> BuddyDesk</span>.vbs</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FOOTER -->
-  <footer class="site-footer">
-    <div class="container">
-      <div class="footer-row">
-        <div class="footer-brand">
-          <span class="footer-mark">&#x1f43e;</span>
+<!doctype html>
+<html lang="zh-CN" class="no-js">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f7f2" />
+    <title>BuddyDesk · 桌面上的小橘，和你一起把事情做好</title>
+    <meta
+      name="description"
+      content="BuddyDesk 是 Windows 桌面个人助理。橘猫陪伴、Alt+F 语音交互、任务确认与提醒、文件阅读，以及原生 WinIsland 毛玻璃界面。支持自己的模型和语音服务，现提供源码安装。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:title" content="BuddyDesk · 你的桌面，多一个搭子。" />
+    <meta
+      property="og:description"
+      content="平时安静陪着你，需要时一起梳理事情、处理文件，把提醒留在桌面。"
+    />
+    <meta
+      property="og:url"
+      content="https://lzsobig.github.io/BuddyDesk-pet-claude/"
+    />
+    <meta
+      property="og:image"
+      content="https://lzsobig.github.io/BuddyDesk-pet-claude/assets/product-preview.png"
+    />
+    <link
+      rel="canonical"
+      href="https://lzsobig.github.io/BuddyDesk-pet-claude/"
+    />
+    <link rel="icon" href="assets/mark.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:ital,opsz,wght@0,12..96,400;0,12..96,500;0,12..96,600;0,12..96,700;0,12..96,800;1,12..96,500&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="product.css" />
+    <script src="product.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <nav class="site-nav" aria-label="Primary">
+      <div class="container nav-row">
+        <a href="#top" class="nav-brand">
+          <span class="brand-mark"></span>
           BuddyDesk
+          <span class="ver">v0.3.0</span>
+        </a>
+        <ul class="nav-links" id="nav-links">
+          <li>
+            <a href="#demo"><span class="num">01</span> the agent</a>
+          </li>
+          <li>
+            <a href="#experience"><span class="num">02</span> workflow</a>
+          </li>
+          <li>
+            <a href="#features"><span class="num">03</span> on desktop</a>
+          </li>
+          <li>
+            <a href="#voice"><span class="num">04</span> voice</a>
+          </li>
+          <li>
+            <a href="#install"><span class="num">05</span> install</a>
+          </li>
+        </ul>
+        <a
+          href="https://github.com/lzsobig/BuddyDesk-pet-claude"
+          target="_blank"
+          rel="noopener"
+          class="nav-cta"
+          >github <span class="arrow">&#x2197;</span></a
+        >
+        <button
+          class="mobile-toggle menu-toggle"
+          id="mobileToggle"
+          aria-label="展开导航"
+          aria-controls="nav-links"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 24 24">
+            <path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+    </nav>
+    <main id="main">
+      <section class="hero-wrapper" id="top" aria-labelledby="opening-title">
+        <div class="hero-sticky" style="padding-top: 72px">
+          <div class="image-stack" aria-hidden="true">
+            <div class="card-wrap">
+              <div class="card">
+                <img src="assets/01-launcher.png" alt="" />
+              </div>
+            </div>
+            <div class="card-wrap">
+              <div class="card"><img src="assets/02-sleep.png" alt="" /></div>
+            </div>
+            <div class="card-wrap">
+              <div class="card"><img src="assets/03-happy.png" alt="" /></div>
+            </div>
+            <div class="card-wrap">
+              <div class="card">
+                <img src="assets/04-thinking.png" alt="" />
+              </div>
+            </div>
+            <div class="card-wrap">
+              <div class="card"><img src="assets/05-idle.png" alt="" /></div>
+            </div>
+          </div>
+
+          <div class="text-layer">
+            <h1 id="opening-title">
+              A desktop cat.<br />A hotkey.<br /><em>A different computer.</em>
+            </h1>
+            <p>
+              小橘住在你的桌面。按下
+              <strong>Alt + F</strong
+              >，聊个想法、整理事项，或者一起处理文件。忙完了，继续安静陪着你。
+            </p>
+            <a href="#install" class="cta pulse"
+              >带小橘回家 <span class="arrow">&rarr;</span></a
+            >
+          </div>
+
+          <div class="status-bar">
+            <a
+              href="https://github.com/lzsobig/BuddyDesk-pet-claude"
+              target="_blank"
+              rel="noopener"
+              >github / lzsobig / BuddyDesk</a
+            >
+            <div class="status">
+              <span class="dot"></span>
+              <span>v0.3.0 &middot; Windows</span>
+            </div>
+          </div>
+
+          <div class="scroll-hint" id="scrollHint">
+            <span>scroll</span>
+            <div class="chevron"></div>
+          </div>
         </div>
-        <div class="footer-links">
-          <a href="https://github.com/lzsobig/BuddyDesk-pet-claude" target="_blank" rel="noopener">GitHub</a>
-          <a href="https://github.com/lzsobig/BuddyDesk-pet-claude/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
-          <a href="https://github.com/lzsobig/BuddyDesk-pet-claude/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
-          <a href="https://github.com/nicepkg/HermesPet" target="_blank" rel="noopener">HermesPet &#x2197;</a>
+      </section>
+      <section
+        class="shell live-experience"
+        id="demo"
+        aria-labelledby="hero-title"
+      >
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="status-dot" aria-hidden="true"></span> A LITTLE
+            COMPANY. A LITTLE HELP.
+          </p>
+          <h2 id="hero-title">
+            现在，<br />一起<span class="warm-ink">做点事。</span>
+          </h2>
+          <p class="hero-description">
+            小橘安静陪着你。需要时，按下 <kbd>Alt</kbd> + <kbd>F</kbd>，<br
+              class="desktop-break"
+            />说说想做什么，一起把事情理清楚。
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button primary"
+              href="https://github.com/lzsobig/BuddyDesk-pet-claude/archive/refs/heads/main.zip"
+              >把小橘带回去 <span aria-hidden="true">↗</span></a
+            ><a class="text-link" href="#experience"
+              >先看看怎么用 <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <p class="hero-note">Windows · 自选模型 · 当前提供源码安装</p>
+        </div>
+        <div class="hero-visual">
+          <div class="desktop-scene" id="desktop-scene" data-state="idle">
+            <div class="desktop-topline">
+              <span
+                ><svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path
+                    d="M1 2.5 7 1.7v5.8H1zm7-1 7-1v7H8zM1 8.5h6v5.8L1 13.5zm7 0h7v7l-7-1z"
+                  /></svg
+                >属于你的桌面</span
+              ><span>14:00</span>
+            </div>
+            <div class="scene-orbit" aria-hidden="true"></div>
+            <div class="scene-glow" aria-hidden="true"></div>
+            <div class="island" id="demo-island">
+              <div class="island-heading">
+                <span class="island-presence" aria-hidden="true"></span
+                ><span id="island-status" aria-live="polite">小橘在身边</span
+                ><span
+                  class="island-signal"
+                  id="island-signal"
+                  aria-hidden="true"
+                  ><i></i><i></i><i></i><i></i><i></i
+                ></span>
+              </div>
+              <div class="island-content" id="island-content" hidden>
+                <p class="demo-transcript" id="demo-transcript" hidden></p>
+                <div class="demo-draft" id="demo-draft" hidden>
+                  <p class="island-section-label">先核对一下</p>
+                  <label class="demo-edit-label"
+                    >事项一<input
+                      id="draft-one"
+                      type="text"
+                      value="结构力学课"
+                      maxlength="45"
+                      autocomplete="off" /></label
+                  ><label class="demo-edit-label"
+                    >事项二<input
+                      id="draft-two"
+                      type="text"
+                      value="给老师发送材料"
+                      maxlength="45"
+                      autocomplete="off"
+                  /></label>
+                  <div class="draft-actions">
+                    <span>14:00 上课 · 20:00 提醒</span
+                    ><button type="button" id="confirm-demo">
+                      放到今天 <span aria-hidden="true">↗</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="demo-today" id="demo-today" hidden>
+                  <p class="island-section-label">今天，接下来</p>
+                  <div class="demo-task">
+                    <button
+                      type="button"
+                      class="task-dot"
+                      aria-label="完成结构力学课"
+                      aria-pressed="false"
+                    >
+                      <svg viewBox="0 0 12 12" aria-hidden="true">
+                        <path d="m2.5 6 2.3 2.3 4.7-4.6" />
+                      </svg>
+                    </button>
+                    <div>
+                      <span id="task-one">结构力学课</span><small>14:00</small>
+                    </div>
+                  </div>
+                  <div class="demo-task">
+                    <button
+                      type="button"
+                      class="task-dot"
+                      aria-label="完成给老师发送材料"
+                      aria-pressed="false"
+                    >
+                      <svg viewBox="0 0 12 12" aria-hidden="true">
+                        <path d="m2.5 6 2.3 2.3 4.7-4.6" />
+                      </svg>
+                    </button>
+                    <div>
+                      <span id="task-two">给老师发送材料</span
+                      ><small>20:00 提醒</small>
+                    </div>
+                  </div>
+                  <p
+                    class="demo-completion"
+                    id="demo-completion"
+                    aria-live="polite"
+                  >
+                    做好一件，就轻一点。
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="desktop-note">
+              <span class="note-topline">TODAY, AT YOUR OWN PACE.</span>
+              <p>不用一下子<br />做好所有事情。</p>
+              <span class="note-line"></span><small>先从眼前这一件开始。</small>
+            </div>
+            <div class="pet-spot">
+              <div class="pet-shadow" aria-hidden="true"></div>
+              <button
+                class="pet-touch"
+                type="button"
+                aria-label="抚摸或拖动小橘"
+              >
+                <img
+                  id="demo-pet"
+                  src="assets/companion-idle.png"
+                  width="1254"
+                  height="1254"
+                  alt="小橘，一只毛茸茸的橘猫"
+                  fetchpriority="high"
+                /></button
+              ><span class="pet-caption">摸摸小橘，或拖动它</span>
+            </div>
+            <button class="demo-trigger" id="demo-trigger" type="button">
+              <span class="key-pair"
+                ><kbd>Alt</kbd><span>+</span><kbd>F</kbd></span
+              ><span id="trigger-label">按一下，试试</span
+              ><span aria-hidden="true">↗</span>
+            </button>
+          </div>
+          <div class="preview-caption">
+            <span>可点击的交互预览 · 不录音、不连接模型</span
+            ><button id="demo-reset" type="button">
+              重新体验 <span aria-hidden="true">↻</span>
+            </button>
+          </div>
+          <noscript
+            ><p class="no-script-note">
+              此处是产品示意。开启 JavaScript 可体验语音整理与清单勾选流程。
+            </p></noscript
+          >
+        </div>
+      </section>
+      <div class="hero-ribbon" aria-hidden="true">
+        <div>
+          <span>A LITTLE COMPANY. <b>MORE POSSIBILITY.</b></span
+          ><span>HELLO, BUDDYDESK. <b>LET’S DO IT TOGETHER.</b></span
+          ><span>A LITTLE COMPANY. <b>MORE POSSIBILITY.</b></span
+          ><span>HELLO, BUDDYDESK. <b>LET’S DO IT TOGETHER.</b></span>
         </div>
       </div>
-      <div class="footer-fine">
-        <em>Made with Python and love for pixel cats.</em> &middot; Windows only &middot; 0 trackers &middot; 0 telemetry
+      <section
+        class="shell experience-section"
+        id="experience"
+        aria-labelledby="experience-title"
+      >
+        <div class="section-heading">
+          <p class="eyebrow">LESS OPENING APPS. MORE GETTING ON.</p>
+          <h2 id="experience-title">一句话，把事情<br />放回顺序里。</h2>
+          <p>
+            聊天只是入口之一。真正想帮你的，是从“我今天要做什么”，走到“已经安排好了”。
+          </p>
+        </div>
+        <ol class="experience-steps">
+          <li>
+            <span class="step-number">01 / 说说</span>
+            <h3>像跟搭子说话一样。</h3>
+            <p>
+              “下午两点上课，晚上八点提醒我给老师发材料。”也可以问问题、修改清单，不必把每句话都变成任务。
+            </p>
+          </li>
+          <li>
+            <span class="step-number">02 / 核对</span>
+            <h3>先整理，交给你确认。</h3>
+            <p>
+              小橘梳理事项和时间。标题、提醒都能改；听得不确定、指向不清楚的地方，先问清楚。
+            </p>
+          </li>
+          <li>
+            <span class="step-number">03 / 继续</span>
+            <h3>事情留下，你接着忙。</h3>
+            <p>
+              确认后进入灵动岛的今日事项。到时间轻轻提醒，做好了点一下圆圈；再点一下，也能撤销完成。
+            </p>
+          </li>
+        </ol>
+      </section>
+      <section
+        class="surface-section"
+        id="features"
+        aria-labelledby="surface-title"
+      >
+        <div class="shell surface-layout">
+          <div class="surface-copy">
+            <p class="eyebrow">A QUIET PRESENCE.</p>
+            <h2 id="surface-title">轻一点，<br />留在桌面就好。</h2>
+            <p>
+              不用每次都打开一个大聊天框。输入贴在原生灵动岛上；思考时，屏幕边缘给一点柔和反馈。
+            </p>
+            <p>
+              原来的媒体和桌宠内容继续保留。今日事项放在展开内容下面，让你抬眼就知道接下来做什么。
+            </p>
+            <a class="text-link" href="#install"
+              >了解原生灵动岛安装 <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <figure class="surface-preview">
+            <div class="surface-preview-backdrop">
+              <img
+                src="assets/voice-island.png"
+                alt="Windows 实机输入界面：毛玻璃小圆角面板，显示小橘在听、输入区和发送按钮"
+                width="588"
+                height="216"
+                loading="lazy"
+              />
+            </div>
+            <figcaption>
+              <span>Windows 实机界面</span><span>原生毛玻璃 · 连续圆角</span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+      <section class="shell capabilities" aria-labelledby="capabilities-title">
+        <div class="capabilities-heading">
+          <p class="eyebrow">A COMPANION THAT CAN HELP.</p>
+          <h2 id="capabilities-title">陪着你，也帮得上忙。</h2>
+        </div>
+        <div class="capability-list">
+          <article>
+            <span class="capability-index">01</span>
+            <div>
+              <h3>语音，直接说就好。</h3>
+              <p>
+                本地 SenseVoice 或云端兼容语音
+                API，录音、转写和结束反馈接在一起。豆包输入法保留为两步兼容入口。
+              </p>
+              <a href="#voice"
+                >选择语音方式 <span aria-hidden="true">↗</span></a
+              >
+            </div>
+          </article>
+          <article>
+            <span class="capability-index">02</span>
+            <div>
+              <h3>拖进文件，先问你怎么读。</h3>
+              <p>
+                临时阅读、总结、提取任务、提问，或明确加入个人资料。支持常见文档、文本、图片和代码；文件夹先列直接子项。
+              </p>
+              <span class="capability-detail"
+                >PDF / DOCX / XLSX / Markdown / 图片</span
+              >
+            </div>
+          </article>
+          <article>
+            <span class="capability-index">03</span>
+            <div>
+              <h3>模型，由你来选。</h3>
+              <p>
+                继续用已配置的 Claude Code，也能填写自己的 OpenAI
+                兼容服务，或连接本机模型。聊天和语音的配置分开管理。
+              </p>
+              <a href="#install"
+                >查看连接配置 <span aria-hidden="true">↗</span></a
+              >
+            </div>
+          </article>
+          <article>
+            <span class="capability-index">04</span>
+            <div>
+              <h3>行动之前，边界清楚。</h3>
+              <p>
+                本机操作默认逐次确认。你可以主动开启完全访问；任务变更仍要核对，涉及文件参考内容的操作也保留确认。
+              </p>
+              <span class="capability-detail">设置 → 偏好 → 访问权限</span>
+            </div>
+          </article>
+        </div>
+      </section>
+      <section
+        class="install-section"
+        id="install"
+        aria-labelledby="install-title"
+      >
+        <div class="shell">
+          <div class="install-heading">
+            <div>
+              <p class="eyebrow">MAKE A LITTLE ROOM.</p>
+              <h2 id="install-title">把小橘，<br />带到你的桌面。</h2>
+            </div>
+            <div class="install-intro">
+              <p>
+                当前以源码方式安装。先运行桌宠，再按需要启用原生灵动岛和语音。
+              </p>
+              <a
+                class="button light"
+                href="https://github.com/lzsobig/BuddyDesk-pet-claude/archive/refs/heads/main.zip"
+                >下载源码 <span aria-hidden="true">↓</span></a
+              ><a
+                class="install-readme"
+                href="https://github.com/lzsobig/BuddyDesk-pet-claude#quick-start"
+                target="_blank"
+                rel="noopener noreferrer"
+                >完整安装说明 ↗</a
+              >
+            </div>
+          </div>
+          <div class="installation-panel">
+            <div class="install-tabs" role="tablist" aria-label="安装方式">
+              <button
+                type="button"
+                id="tab-basic"
+                role="tab"
+                aria-selected="true"
+                aria-controls="panel-basic"
+                data-tab="basic"
+              >
+                基础桌宠</button
+              ><button
+                type="button"
+                id="tab-native"
+                role="tab"
+                aria-selected="false"
+                aria-controls="panel-native"
+                tabindex="-1"
+                data-tab="native"
+              >
+                原生灵动岛
+              </button>
+            </div>
+            <div
+              id="panel-basic"
+              role="tabpanel"
+              aria-labelledby="tab-basic"
+              class="install-panel"
+            >
+              <div class="install-guide">
+                <span class="setup-number">START SMALL.</span>
+                <h3>先让小橘住下来。</h3>
+                <p>
+                  准备 64 位 Python，本机已验证 Python
+                  3.12。下载源码并解压，在根目录运行下面两行；也可以双击「启动
+                  BuddyDesk.bat」。
+                </p>
+                <p>
+                  启动后打开 <strong>设置 → 连接</strong>，填写模型服务地址、API
+                  Key 和模型名。Claude Code CLI 需要另行安装配置。
+                </p>
+              </div>
+              <div class="code-block">
+                <div class="code-heading">
+                  <span>源码根目录 / PowerShell</span
+                  ><button type="button" data-copy="basic-command">复制</button>
+                </div>
+                <pre><code id="basic-command">python -m pip install -r requirements.txt
+python main.py</code></pre>
+                <p class="code-footnote">
+                  基础模式使用 Qt 灵动岛。完整原生体验见右侧标签。
+                </p>
+              </div>
+            </div>
+            <div
+              id="panel-native"
+              role="tabpanel"
+              aria-labelledby="tab-native"
+              class="install-panel"
+              hidden
+            >
+              <div class="install-guide">
+                <span class="setup-number">GO NATIVE.</span>
+                <h3>启用原生毛玻璃界面。</h3>
+                <p>
+                  准备 Rust MSVC 工具链、Visual Studio C++ Build Tools 和
+                  LLVM，再编译仓库内的 WinIsland。
+                </p>
+                <p>
+                  编译后，分别在两个终端运行助手和灵动岛，先启动助手。媒体功能照常保留，今日事项附在展开内容下方。
+                </p>
+              </div>
+              <div class="code-block">
+                <div class="code-heading">
+                  <span>源码根目录 / PowerShell</span
+                  ><button type="button" data-copy="native-command">
+                    复制
+                  </button>
+                </div>
+                <pre><code id="native-command"># 先编译
+cargo build --release --manifest-path winisland/Cargo.toml
+
+# 终端 1：助手
+python main.py --winisland --background
+
+# 终端 2：灵动岛
+.\winisland\target\release\WinIsland.exe --companion</code></pre>
+              </div>
+            </div>
+          </div>
+          <p class="install-status">
+            <span class="status-dot" aria-hidden="true"></span>源码 v0.3.0 ·
+            当前不提供已验证的 EXE 发布包
+          </p>
+        </div>
+      </section>
+      <section
+        class="shell voice-section"
+        id="voice"
+        aria-labelledby="voice-title"
+      >
+        <div class="voice-heading">
+          <p class="eyebrow">YOUR VOICE. YOUR CHOICE.</p>
+          <h2 id="voice-title">选一种，适合你的语音。</h2>
+          <p>在「设置 → 语音」里配置。先试说一句，确认识别正常，再保存。</p>
+        </div>
+        <div class="voice-options">
+          <article>
+            <span class="voice-type">LOCAL / 本地</span>
+            <h3>录音留在电脑上。</h3>
+            <p>
+              选择「本地模型」，点击一键安装，或导入已有的 SenseVoice-Small ONNX
+              目录。
+            </p>
+            <p class="voice-secondary">
+              模型目录需要 <code>model.onnx</code> 和
+              <code>tokens.json</code>。普通 Whisper 模型不能直接导入此处。
+            </p>
+          </article>
+          <article>
+            <span class="voice-type">API / 云端或本机服务</span>
+            <h3>连接你已有的服务。</h3>
+            <p>
+              选择「云端 API」，填写基础地址、语音 Key 和识别模型。服务需要兼容
+              <code>/audio/transcriptions</code>。
+            </p>
+            <p class="voice-secondary">
+              本机 localhost 服务可不填 Key；已有 Whisper / Qwen
+              服务需要提供兼容 API，Web UI 地址本身不等于 API。
+            </p>
+          </article>
+          <article>
+            <span class="voice-type">COMPATIBLE / 豆包</span>
+            <h3>保留熟悉的输入方式。</h3>
+            <p>
+              本机安装并启用豆包输入法后，选择「豆包兼容」。按 Alt+F
+              打开接收区，再按住右 Alt 说话。
+            </p>
+            <p class="voice-secondary">
+              这是两步兼容方式。若想按快捷键后直接说话，使用本地模型或云端 API
+              模式。
+            </p>
+          </article>
+        </div>
+      </section>
+      <section class="shell faq-section" aria-labelledby="faq-title">
+        <div>
+          <p class="eyebrow">BEFORE YOU BRING HER HOME.</p>
+          <h2 id="faq-title">你可能还想知道。</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>现在能直接下载 EXE 吗？</summary>
+            <p>
+              当前提供源码安装，尚未发布已验证的 EXE
+              包。请使用源码下载和安装说明；只安装 Python
+              可以先使用基础桌宠，原生 WinIsland 需要额外编译。
+            </p>
+          </details>
+          <details>
+            <summary>可以完全离线使用吗？</summary>
+            <p>
+              本地 SenseVoice
+              语音识别可以离线运行。大模型是否离线取决于你的配置：连接 Ollama
+              等本机服务需要你先部署模型；选择云端模型或云端语音则需要网络。
+            </p>
+          </details>
+          <details>
+            <summary>我的资料和 API Key 放在哪里？</summary>
+            <p>
+              配置、聊天、任务和个人资料库保存在当前用户的
+              <code>.buddydesk</code>
+              目录。使用云端服务时，相关输入或录音会发送给你配置的服务。临时阅读不会默认加入资料库，只有明确选择「加入知识库」才持久保存资料。
+            </p>
+          </details>
+          <details>
+            <summary>它会自己执行电脑操作吗？</summary>
+            <p>
+              默认逐次确认。你可以在「设置 →
+              偏好」主动开启完全访问，允许助手直接执行本机操作，权限仍受当前
+              Windows
+              账户限制。任务清单变更继续核对；文件参考内容不会自动获得完全访问授权。
+            </p>
+          </details>
+          <details>
+            <summary>哪些地方还在继续完善？</summary>
+            <p>
+              当前重点是桌面交互、任务与提醒、文件处理和语音入口。跨电脑安装体验、不同麦克风与语音服务的稳定性，以及更深入的长期记忆和工具能力仍在完善。页面中的交互预览使用示例内容，不会录音或调用模型。
+            </p>
+          </details>
+        </div>
+      </section>
+      <section class="shell closing-section">
+        <img
+          src="assets/companion-thinking.png"
+          alt="小橘认真思考的样子"
+          width="1254"
+          height="1254"
+          loading="lazy"
+        />
+        <div>
+          <p class="eyebrow">SOME THINGS ARE BETTER TOGETHER.</p>
+          <h2>一起，把今天做好。</h2>
+          <a
+            class="button primary"
+            href="https://github.com/lzsobig/BuddyDesk-pet-claude"
+            >去 GitHub 看看 <span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </section>
+    </main>
+    <footer class="shell footer">
+      <a class="wordmark" href="#top">BuddyDesk</a><span>小橘在身边。</span>
+      <div>
+        <a href="https://github.com/lzsobig/BuddyDesk-pet-claude">源码</a
+        ><a href="https://github.com/lzsobig/BuddyDesk-pet-claude/issues"
+          >反馈</a
+        ><a
+          href="https://github.com/lzsobig/BuddyDesk-pet-claude/blob/main/LICENSE"
+          >BuddyDesk 许可证</a
+        ><a
+          href="https://github.com/lzsobig/BuddyDesk-pet-claude/blob/main/winisland/LICENSE"
+          >WinIsland 许可证</a
+        >
       </div>
-    </div>
-  </footer>
-
-  <!-- Toast -->
-  <div class="toast" id="toast">Copied to clipboard</div>
-
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
-  <script>
-    gsap.registerPlugin(ScrollTrigger);
-
-    var prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    // ── Mobile menu ───────────────────────────────────────
-    var mobileToggle = document.getElementById('mobileToggle');
-    var navLinks = document.getElementById('navLinks');
-    mobileToggle.addEventListener('click', function() {
-      var isOpen = navLinks.classList.toggle('open');
-      mobileToggle.setAttribute('aria-expanded', isOpen);
-    });
-    navLinks.querySelectorAll('a').forEach(function(link) {
-      link.addEventListener('click', function() {
-        navLinks.classList.remove('open');
-        mobileToggle.setAttribute('aria-expanded', 'false');
-      });
-    });
-
-    // ── Copy button ──────────────────────────────────────
-    var copyBtn = document.getElementById('copyBtn');
-    var toast = document.getElementById('toast');
-    copyBtn.addEventListener('click', function() {
-      navigator.clipboard.writeText('git clone https://github.com/lzsobig/BuddyDesk-pet-claude.git').then(function() {
-        copyBtn.textContent = 'Copied!';
-        toast.classList.add('show');
-        setTimeout(function() { toast.classList.remove('show'); }, 2000);
-        setTimeout(function() { copyBtn.textContent = 'Copy clone command'; }, 3000);
-      });
-    });
-
-    // ── Hero scatter ─────────────────────────────────────
-    var cardWraps = gsap.utils.toArray('.card-wrap');
-    var cards = gsap.utils.toArray('.card');
-
-    var cardData = [
-      { ix: -45, iy: -30, ir: -18, sx: -360, sy: -300, sr: -25 },
-      { ix:  60, iy: -45, ir:  -8, sx:  360, sy: -280, sr:  22 },
-      { ix:   0, iy:   0, ir:   4, sx: -560, sy:  120, sr: -12 },
-      { ix: -35, iy:  35, ir:  12, sx:  560, sy:  140, sr:  17 },
-      { ix:  45, iy:  30, ir:  19, sx:    0, sy:  460, sr:   0 }
-    ];
-
-    if (!prefersReducedMotion) {
-      cardWraps.forEach(function(wrap, i) {
-        var d = cardData[i];
-        gsap.set(wrap, { x: d.ix, y: d.iy, rotation: d.ir, scale: 1, transformOrigin: '50% 50%' });
-      });
-      gsap.set('.text-layer', { opacity: 0, scale: 0.5, transformOrigin: '50% 50%' });
-
-      cardWraps.forEach(function(wrap, i) {
-        var d = cardData[i];
-        gsap.to(wrap, {
-          x: d.ix + d.sx, y: d.iy + d.sy, rotation: d.ir + d.sr, scale: 0.8,
-          ease: 'none',
-          scrollTrigger: { trigger: '.hero-wrapper', start: 'top top', end: 'bottom bottom', scrub: 1 }
-        });
-      });
-      gsap.to('.text-layer', {
-        opacity: 1, scale: 1, ease: 'none',
-        scrollTrigger: { trigger: '.hero-wrapper', start: 'top top', end: 'bottom bottom', scrub: 1 }
-      });
-
-      cards.forEach(function(card) {
-        card.addEventListener('mouseenter', function() {
-          gsap.killTweensOf(card);
-          gsap.to(card, { y: -12, scale: 1.1, duration: 0.7, ease: 'elastic.out(1, 0.5)' });
-        });
-        card.addEventListener('mouseleave', function() {
-          gsap.killTweensOf(card);
-          gsap.to(card, { y: 0, scale: 1, duration: 0.6, ease: 'elastic.out(1, 0.5)' });
-        });
-      });
-    } else {
-      gsap.set('.text-layer', { opacity: 1, scale: 1 });
-    }
-
-    // ── Section reveals ──────────────────────────────────
-    if (!prefersReducedMotion) {
-      var fadeUp = function(sel, opts) {
-        opts = opts || {};
-        gsap.utils.toArray(sel).forEach(function(el) {
-          gsap.set(el, { opacity: 0, y: 40 });
-          gsap.to(el, {
-            opacity: 1, y: 0, duration: 0.9, ease: 'power3.out',
-            scrollTrigger: { trigger: el, start: 'top 85%', once: true }
-          });
-        });
-      };
-      fadeUp('.cat-grid > *');
-      fadeUp('.hotkey-grid > *');
-      fadeUp('.chat-window');
-      fadeUp('.install-grid > *');
-      fadeUp('.marquee', { duration: 0.6 });
-
-      // Brain list stagger
-      gsap.set('.brain', { opacity: 0, y: 20 });
-      gsap.to('.brain', {
-        opacity: 1, y: 0, duration: 0.6, ease: 'power2.out', stagger: 0.07,
-        scrollTrigger: { trigger: '.brain-list', start: 'top 80%', once: true }
-      });
-    }
-
-    // ── Chat reveal animation ────────────────────────────
-    var chatMessages = gsap.utils.toArray('.chat-msg');
-    var chatAnimated = false;
-
-    ScrollTrigger.create({
-      trigger: '.chat-section',
-      start: 'top 60%',
-      once: true,
-      onEnter: function() {
-        if (chatAnimated || prefersReducedMotion) return;
-        chatAnimated = true;
-        var baseDelay = 0;
-        chatMessages.forEach(function(el) {
-          gsap.set(el, { opacity: 0, y: 16 });
-          gsap.to(el, {
-            opacity: 1, y: 0, duration: 0.4, ease: 'power2.out', delay: baseDelay
-          });
-          baseDelay += el.classList.contains('bot') ? 0.55 : 0.3;
-        });
-      }
-    });
-
-    // ── Hotkey key press animation ───────────────────────
-    if (!prefersReducedMotion) {
-      var tl = gsap.timeline({ repeat: -1, repeatDelay: 1.2 });
-      tl.to('[data-key="ctrl"]',  { duration: 0.18, className: '+=pressed' })
-        .to('[data-key="ctrl"]',  { duration: 0.18, className: '-=pressed' }, '+=0.05')
-        .to('[data-key="shift"]', { duration: 0.18, className: '+=pressed' })
-        .to('[data-key="shift"]', { duration: 0.18, className: '-=pressed' }, '+=0.05')
-        .to('[data-key="h"]',     { duration: 0.18, className: '+=pressed' })
-        .to('[data-key="h"]',     { duration: 0.22, className: '-=pressed' }, '+=0.1');
-
-      // Click to replay key sequence
-      var keyCluster = document.getElementById('keyCluster');
-      keyCluster.addEventListener('click', function() {
-        tl.restart();
-      });
-    }
-
-    // ── Keyboard shortcut: press Ctrl+Shift+H to play key animation ──
-    document.addEventListener('keydown', function(e) {
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyH') {
-        e.preventDefault();
-        if (typeof tl !== 'undefined') tl.restart();
-      }
-    });
-
-    // ── Mood switcher (click to select, auto-cycles) ─────
-    var moods = gsap.utils.toArray('.mood');
-    var moodIdx = 0;
-    var catImage = document.getElementById('catImage');
-    var moodImages = {
-      idle:     'assets/cat_idle.png',
-      happy:    'images/cat_happy.png',
-      sleep:    'assets/02-sleep.png',
-      walk:     'assets/05-idle.png',
-      love:     'assets/03-happy.png',
-      thinking: 'assets/04-thinking.png',
-      error:    'assets/01-launcher.png'
-    };
-
-    function switchMood(idx) {
-      moods.forEach(function(m) { m.classList.remove('active'); });
-      moods[idx].classList.add('active');
-      var name = moods[idx].getAttribute('data-mood');
-      if (moodImages[name] && catImage) {
-        catImage.style.transition = 'opacity 0.25s';
-        catImage.style.opacity = '0.4';
-        var newSrc = moodImages[name];
-        var tester = new Image();
-        tester.onload = function() {
-          catImage.src = newSrc;
-          catImage.style.opacity = '1';
-        };
-        tester.onerror = function() {
-          catImage.style.opacity = '1';
-        };
-        tester.src = newSrc;
-      }
-    }
-
-    var moodTimer = setInterval(function() {
-      moodIdx = (moodIdx + 1) % moods.length;
-      switchMood(moodIdx);
-    }, 2000);
-
-    moods.forEach(function(mood, i) {
-      mood.addEventListener('click', function() {
-        clearInterval(moodTimer);
-        moodIdx = i;
-        switchMood(moodIdx);
-      });
-    });
-
-    // ── Active nav link on scroll ────────────────────────
-    var navLinksArr = gsap.utils.toArray('.nav-links a');
-    var sectionIds = ['cat', 'hotkey', 'chat', 'brain', 'install'];
-
-    sectionIds.forEach(function(id) {
-      var link = document.querySelector('.nav-links a[href="#' + id + '"]');
-      if (!link) return;
-      ScrollTrigger.create({
-        trigger: '#' + id,
-        start: 'top 40%',
-        end: 'bottom 40%',
-        onEnter: function() { navLinksArr.forEach(function(l) { l.classList.remove('active'); }); },
-        onEnterBack: function() { navLinksArr.forEach(function(l) { l.classList.remove('active'); }); },
-        onUpdate: function(self) { if (self.isActive) link.classList.add('active'); }
-      });
-    });
-
-    if (prefersReducedMotion) {
-      gsap.utils.toArray('.terminal-body .tl').forEach(function(el) { el.classList.add('visible'); });
-    }
-
-    // ── Scroll hint: fade out when user scrolls ──────────
-    var scrollHint = document.getElementById('scrollHint');
-    if (scrollHint) {
-      ScrollTrigger.create({
-        trigger: '.hero-wrapper',
-        start: 'top top',
-        end: '15% top',
-        onUpdate: function(self) {
-          scrollHint.style.opacity = 1 - self.progress * 4;
-        }
-      });
-    }
-
-    // ── Terminal line reveal ─────────────────────────────
-    var terminalLines = gsap.utils.toArray('.terminal-body .tl');
-    if (terminalLines.length) {
-      ScrollTrigger.create({
-        trigger: '.terminal',
-        start: 'top 70%',
-        once: true,
-        onEnter: function() {
-          terminalLines.forEach(function(line, i) {
-            setTimeout(function() { line.classList.add('visible'); }, i * 220);
-          });
-        }
-      });
-    }
-
-    window.addEventListener('load', function() { ScrollTrigger.refresh(); });
-  </script>
-</body>
+    </footer>
+  </body>
 </html>

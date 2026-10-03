@@ -1,290 +1,190 @@
 <p align="center">
-  <img src="assets/cat_frames_v2/preview_idle.png" width="100" alt="BuddyDesk">
+  <img src="docs/assets/companion-idle.png" width="112" alt="小橘，BuddyDesk 的橘猫桌宠">
 </p>
-
 <h1 align="center">BuddyDesk</h1>
+<p align="center">
+  <strong>你的桌面，多一个搭子。</strong><br>
+  平时安静陪着你，需要时一起把事情做好。
+</p>
+<p align="center">
+  <a href="https://lzsobig.github.io/BuddyDesk-pet-claude/">体验产品页</a> ·
+  <a href="#quick-start">安装与配置</a> ·
+  <a href="https://github.com/lzsobig/BuddyDesk-pet-claude/archive/refs/heads/main.zip">下载源码</a> ·
+  <a href="https://github.com/lzsobig/BuddyDesk-pet-claude/issues">反馈问题</a>
+</p>
+<p align="center"><sub>Windows · Python / PySide6 + Rust / WinIsland · v0.3.0 · 当前以源码安装</sub></p>
+
+<a href="https://lzsobig.github.io/BuddyDesk-pet-claude/">
+  <img src="docs/assets/product-preview.png" width="1200" alt="BuddyDesk 产品展示：橘猫陪伴、原生灵动岛，以及 Alt+F 协作入口">
+</a>
+<p align="center"><sub>点开产品页，可以体验一段使用示例：说说今天的事、修改清单、确认，以及完成和撤销。</sub></p>
+
+## 从“我今天要做什么”，到“已经安排好了”
+
+BuddyDesk 是一个正在成长的 Windows 桌面 Personal Agent。桌宠是它的角色，灵动岛是它的轻量入口，聊天窗口是更详细的协作空间。
+
+按下 **Alt+F**，可以问问题、聊想法、整理今天的事，或修改已有清单。小橘先理解你的意思，涉及任务变更时交给你核对；确认以后，事项才写入本地数据库、显示到灵动岛，并安排提醒。
+
+| 你想做什么         | 小橘现在怎样帮你                                              |
+| ------------------ | ------------------------------------------------------------- |
+| 整理今天的事       | 提取事项、时间与提醒，给出可编辑的确认清单                    |
+| 修改已有清单       | 理解修改、删除、完成或撤销完成的意图；不把每句话都当成新任务  |
+| 看一眼接下来做什么 | 今日事项附在原生灵动岛展开内容下方，保留原来的媒体和桌宠区域  |
+| 做完一件事         | 点击事项前的小圆圈完成；再点一次撤销。删除由你明确决定        |
+| 到点提醒           | 本地持久化提醒，联动桌宠、灵动岛和提醒卡片，可完成或延后      |
+| 把文件交给助手     | 临时阅读、总结、提取任务、提问，或明确加入个人资料库          |
+| 调用本机工具       | 默认逐次确认；可主动选择完全访问，权限受当前 Windows 账户限制 |
+
+## 桌面上的反馈，放在合适的位置
+
+- **桌宠**：待机、思考、抚摸与拖动等动作，让状态看得见。
+- **原生灵动岛**：沿用 WinIsland 的毛玻璃、连续圆角和展开动画；语音输入直接贴在岛面。
+- **屏幕边缘**：聆听、转写、理解等阶段给出光效反馈，支持关闭动态效果。
+- **聊天窗口**：显示实际处理阶段、文件入口与可展开的工具结果，不让用户面对一个一直转的等待状态。
 
 <p align="center">
-  <strong>Windows 桌面 AI 伴侣</strong><br>
-  灵动岛 · 像素橘猫 · 自然语言命令执行 · Claude Code 集成
+  <img src="docs/assets/voice-island.png" width="588" alt="Windows 实机输入区：原生毛玻璃、小圆角、文字输入和发送按钮">
+  <br><sub>Windows 实机输入界面。产品页里的任务演示使用示例内容，不会录音或调用模型。</sub>
 </p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/PySide6-Qt_for_Python-41CD52?style=flat-square&logo=qt&logoColor=white" alt="PySide6">
-  <img src="https://img.shields.io/badge/License-MIT-5CB89A?style=flat-square" alt="MIT">
-  <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows">
-</p>
-
-<p align="center">
-  快捷键一按，AI 即来。<br>
-  说"打开微信"就能打开，说"查看IP"就能执行。<br>
-  纯 Python，零 Electron，零 Node.js。
-</p>
-
-<p align="center">
-  <a href="#quick-start">Quick Start</a> · <a href="#features">Features</a> · <a href="#architecture">Architecture</a> · <a href="#roadmap">Roadmap</a>
-</p>
-
----
-
-## Why BuddyDesk
-
-> AI 工具界有个不成文的规则：越专业，界面越严肃。
-> 但当你面对一只像素橘猫的时候，你不会觉得"这个问题太蠢了不好意思问"。
-
-BuddyDesk 不是另一个聊天框。它住在你的桌面上 —— 顶部有灵动岛，角落有像素猫，快捷键一按就来，说完就走。
-
----
-
-## Features 特性
-
-<h3>🏝️ Dynamic Island 灵动岛</h3>
-
-屏幕顶部的浮动胶囊，5 种状态实时反馈：
-
-`idle` · `thinking` · `result` · `notify` · `error`
-
-All-Paint 架构 — 所有动画在 `paintEvent` 中绘制，零子控件，`QPainterPath` 抗锯齿。悬停展开预览，点击打开聊天。
-
-<h3>🐱 Pixel Pet 像素宠物</h3>
-
-一只 128px 像素橘猫陪你工作。7 种状态，72 帧精灵图：
-
-| State | Description |
-|-------|-------------|
-| `idle` | 静静待着 |
-| `walk` | 桌面闲逛，自动转向 |
-| `happy` | 开心跳动 |
-| `sleep` | 打瞌睡，ZZZ 飘浮 |
-| `love` | 冒爱心 |
-| `thinking` | 跟着 AI 一起思考 |
-| `error` | 出错时心疼你 |
-
-拖拽移动，双击打开聊天。
-
-<h3>⚡ Command Execution 命令执行</h3>
-
-AI 不只是聊天，**能直接操作你的电脑**：
-
-```
-你: 打开微信
-AI: 好的，帮你打开微信~ [APP:微信]
-   已打开: 微信
-
-你: 查看 IP 地址
-AI: 正在查询... [SHELL:ipconfig]
-   IPv4: 192.168.1.xxx
-
-你: 帮我写一个贪吃蛇
-AI: 让 Claude Code 来帮你！ [CLAUDE:创建贪吃蛇游戏]
-   snake_game.py 已创建
-```
-
-引擎自动解析回复中的标签并执行：`[APP:xxx]` 启动应用、`[SHELL:xxx]` 执行命令、`[CLAUDE:xxx]` 调用 Claude Code。由 AI 回复生成的 Shell、CMD 和 Claude 操作默认需要在聊天中明确回复“确认执行”后才会运行；未确认的操作不会执行。
-
-<h3>💬 Multi-Conversation 多对话</h3>
-
-多对话标签栏 — 新建、切换、关闭。自动从首条消息生成标题，关闭时保存，启动时恢复。
-
-<h3>🤖 Claude Code Integration</h3>
-
-本地安装了 Claude Code CLI？**零配置，打开就用。** 编程、重构、项目创建，一句话搞定。
-
-<h3>🔌 Multi-Backend 多后端</h3>
-
-DeepSeek / NVIDIA / 硅基流动 / Moonshot / Ollama 一键预设。填一个 API Key，选个模型，开聊。
-
----
-
-## Screenshots
-
-<p align="center">
-  <img src="docs/images/launcher.png" height="220" alt="启动配置">
-  &nbsp;&nbsp;
-  <img src="docs/images/island.png" height="220" alt="灵动岛">
-  &nbsp;&nbsp;
-  <img src="docs/images/chat.png" height="220" alt="聊天界面">
-</p>
-
-<p align="center">
-  <em>启动配置 · 灵动岛思考中 · 聊天界面</em>
-</p>
-
----
 
 ## Quick Start
 
-当前提供源码安装，EXE 打包版尚未完成启动验证。本机验证使用 Python 3.12 64 位。
+### 1. 下载源码，运行基础桌宠
 
-### 源码安装与配置
-
-下载本仓库源码并解压，安装 Python 后，在源码根目录运行：
+需要 Windows 和 64 位 Python。本机已验证 Python 3.12；下载源码后，在根目录运行：
 
 ```powershell
-python -m pip install -r requirements.txt
-python main.py
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe main.py
 ```
 
-启动后从托盘或宠物菜单打开「设置 → 连接」，填写自己的模型服务地址、API Key 和模型名称；使用 Claude Code CLI 时需另行安装并配置 CLI。密钥、聊天和任务保存在当前用户的 `.buddydesk` 目录，源码不包含这些个人数据。
+这样不需要修改 PowerShell 的脚本执行策略。也可以双击根目录的 **启动 BuddyDesk.bat**，由脚本定位 Python 并安装依赖；安装成功后，**启动 BuddyDesk.vbs** 可静默启动。
 
-### 使用原生 WinIsland
+基础模式使用 Qt 灵动岛。想使用产品页展示的原生毛玻璃、岛内输入和今日事项，请继续下一步。
 
-`python main.py` 使用兼容的 Qt 灵动岛。完整的原生毛玻璃、岛内输入与今日事项需要启动仓库中 `winisland/` 的 Rust 程序。准备 Rust MSVC 工具链、Visual Studio C++ Build Tools 和 LLVM 后，在源码根目录编译：
+### 2. 启用原生 WinIsland
+
+准备 **Rust MSVC 工具链、Visual Studio C++ Build Tools 和 LLVM**，在源码根目录编译：
 
 ```powershell
 cargo build --release --manifest-path winisland/Cargo.toml
 ```
 
-在两个终端中分别启动，先运行助手，再运行灵动岛：
+在两个终端中分别运行，先启动助手，再启动灵动岛：
 
 ```powershell
-python main.py --winisland --background
+# 终端 1：助手
+.\.venv\Scripts\python.exe main.py --winisland --background
 ```
 
 ```powershell
+# 终端 2：原生灵动岛
 .\winisland\target\release\WinIsland.exe --companion
 ```
 
-启动后按 `Alt+F` 和小橘交互。任务整理或修改先核对，确认后才更新灵动岛；点击事项前的圆圈可完成或撤销完成。
+若自行设置了 `CARGO_TARGET_DIR`，请从对应输出目录启动 `WinIsland.exe`。
 
-语音在「设置 → 语音」配置：本地模式可一键安装 SenseVoice-Small ONNX 或选择已有模型目录；云端模式填写支持 `/audio/transcriptions` 的 API 基础地址、语音 Key 和模型；豆包兼容模式仍需按住右 Alt 说话。先点「试说一句」验证，再保存。
+### 3. 配置自己的模型
 
-<details open>
-<summary><b>One-Click Launch</b> (recommended)</summary>
+从托盘、宠物菜单或聊天窗口进入 **设置 → 连接**。
 
-<br>
+| 接入方式        | 需要配置                                 |
+| --------------- | ---------------------------------------- |
+| OpenAI 兼容服务 | API 基础地址、API Key、模型名称          |
+| 本机模型服务    | 本机服务地址与模型名称；需先部署相应服务 |
+| Claude Code CLI | 另行安装并配置 CLI，必要时填写其路径     |
 
-源码目录中双击 `启动 BuddyDesk.bat`：脚本会定位 Python 3.10+、安装 `requirements.txt`，并在依赖安装成功后启动应用。首次启动建议使用 BAT，这样安装失败时能看到具体错误。
+连接支持已配置的 OpenAI 兼容服务，包括 DeepSeek、硅基流动等；选择哪一个取决于你自己的服务账户。保存后会更新连接。**语音识别的 Key 与聊天模型的 Key 分开配置。**
 
-静默版（无命令行窗口）：先成功运行一次 `启动 BuddyDesk.bat`，再双击 `启动 BuddyDesk.vbs`。VBS 会检查核心依赖，缺少依赖时会提示先运行 BAT，不会静默退出。
+### 4. 选择语音方式
 
-</details>
+打开 **设置 → 语音**，先点“试说一句”验证转写，再保存。
 
-<details>
-<summary><b>Frozen Windows Build</b></summary>
+| 方式            | 如何使用                                                  | 要注意什么                                                                          |
+| --------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| 本地 SenseVoice | 一键安装，或选择已有的 SenseVoice-Small ONNX 模型目录     | 目录须含 `model.onnx` 和 `tokens.json`；模型不随源码分发                            |
+| 云端语音 API    | 填写 API 基础地址、语音 Key 和识别模型                    | 服务需兼容 `POST /audio/transcriptions`；录音会发送至该服务                         |
+| 本机兼容 API    | 在 API 模式填写本机语音服务的基础地址与模型               | localhost 可不填 Key；Whisper、Qwen 等服务须提供兼容 API，Web UI 地址本身不等于 API |
+| 豆包输入法兼容  | 本机先安装并启用豆包，Alt+F 打开接收区，再按住右 Alt 说话 | 保留的两步兼容方式；直接录音请选本地或 API 模式                                     |
 
-仓库中的 `build.spec` 用 PyInstaller 生成 onedir 包：
+本地识别可以离线运行；大模型是否离线取决于你使用本机还是云端模型。云端语音服务可能收费，需要使用自己的服务账户。
 
-```bash
-python -m PyInstaller --clean --noconfirm build.spec
-```
+## 日常使用
 
-该流程仍在调试，当前不提供已验证的 EXE 发布包。构建前需要准备 WinIsland 的 release 程序；可用 `BUDDYDESK_WINISLAND_EXE` 环境变量指定其路径。生成的 onedir 包需保持 `_internal` 与 exe 在一起，不能只复制 exe。
+| 操作               | 作用                                         |
+| ------------------ | -------------------------------------------- |
+| **Alt+F**          | 开始协作输入；直接录音模式下再次按下结束录音 |
+| **Esc**            | 取消当前聆听或正在处理的语音交互             |
+| **Ctrl+Enter**     | 在灵动岛文字接收区发送                       |
+| **Ctrl+Shift+H**   | 显示或隐藏聊天窗口                           |
+| 双击桌宠           | 打开聊天                                     |
+| 拖动桌宠           | 调整它的位置                                 |
+| 点击事项前的小圆圈 | 完成 / 撤销完成                              |
+| 拖入文件或文件夹   | 先选择处理方式，不默认永久保存               |
 
-</details>
+例如：
 
-<details>
-<summary><b>Manual Setup</b></summary>
+> “下午两点有结构力学课，晚上八点提醒我给老师发材料。”
+>
+> “数学第三章已经做好了，把它标记完成。”
+>
+> “这个文件夹里面有什么？先别读子文件。”
 
-```bash
-git clone https://github.com/lzsobig/BuddyDesk-pet-claude.git
-cd BuddyDesk-pet-claude
-python -m pip install -r requirements.txt
-python main.py
-```
+任务变更先核对。语音识别不准确时，可以修正文案和时间；不要重复确认已经保存成功的同一份清单。
 
-</details>
+## 文件、资料与权限
 
-<details>
-<summary><b>AI Backend</b></summary>
+**文件入口**支持文本 PDF、DOCX、XLSX、Markdown、TXT、代码和常见图片。图片文字识别依赖 Windows OCR 语言包；扫描 PDF 请先进行 OCR。旧版 DOC / XLS 需要另存为新格式。
 
-**Claude Code** — Install [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), select "Claude Code" on launch. The CLI path can be overridden in settings when it is not on PATH.
+- **临时阅读**：作为当前会话的参考，不默认加入资料库。
+- **加入知识库**：只有明确选择此项，才持久保存资料。
+- **文件夹**：先列直接子项，不自动递归读取整个目录。
+- **容量**：一次最多 5 个文件或文件夹，单文件最多 20 MB；过大的文档需先拆分。
 
-**OpenAI API** — Paste API key, choose a platform:
+**访问权限**在“设置 → 偏好”选择。默认逐次确认；完全访问需要你主动开启，不等于管理员权限。任务清单变更仍保留确认，涉及外部文件参考内容的操作也继续核对。
 
-| Platform | Base URL |
-|----------|----------|
-| OpenAI | `https://api.openai.com/v1` |
-| DeepSeek | `https://api.deepseek.com/v1` |
-| NVIDIA | `https://integrate.api.nvidia.com/v1` |
-| SiliconFlow | `https://api.siliconflow.cn/v1` |
-| Moonshot | `https://api.moonshot.cn/v1` |
-| Ollama | `http://localhost:11434/v1` |
+配置、聊天、任务、提醒和个人资料保存在当前用户的 **`.buddydesk`** 目录。使用云端模型或语音服务时，相关输入会发送给你配置的服务；不要把该目录当作源码一起分享。
 
-</details>
+## 当前状态
 
-<details>
-<summary><b>Voice Input (optional)</b></summary>
+当前重点是桌面交互、语音入口、任务与提醒，以及文件处理。源码可运行；跨电脑安装、不同麦克风与语音服务的稳定性还需要在各自环境中验证。更深入的自动长期记忆和工具能力仍在完善。
 
-语音输入依赖 `sounddevice`、`onnxruntime` 和本地 SenseVoice-Small ONNX 模型。模型文件不随源码或 PyInstaller 包发布，默认目录为：
-
-```text
-%APPDATA%\Shandianshuo\models\sensevoice-small\model.onnx
-%APPDATA%\Shandianshuo\models\sensevoice-small\tokens.json
-```
-
-缺少模型时，文字聊天和应用启动不受影响；只有语音输入不可用。模型就绪后按住 `Ctrl+Shift+V` 录音，松开后识别结果会回填聊天输入框。
-
-</details>
-
----
-
-## Controls
-
-| Action | Effect |
-|--------|--------|
-| `Ctrl+Shift+H` | Toggle chat window |
-| Click island | Open chat |
-| Double-click pet | Open chat |
-| Drag pet | Move position |
-| Hover island | Preview state |
-| "打开XXX" | Launch app |
-| "查看XXX" | Run command |
-| "帮我XXX" | Claude Code task |
-
----
+**目前不提供已验证的 EXE 发布包。** `build.spec` 保留开发中的打包流程，不能把生成调试包等同于已经完成发布验证。
 
 ## Architecture
 
+保持现有技术栈增量开发，没有把项目换成新的桌面框架。
+
+```mermaid
+flowchart LR
+    Input[文字 / 语音 / 文件] --> Agent[Agent Controller]
+    Agent --> Planner[意图理解与规划]
+    Planner --> Confirm[用户确认]
+    Confirm --> Store[SQLite 任务与提醒]
+    Agent --> Tools[注册工具与权限检查]
+    Agent --> Chat[模型聊天链路]
+    Store --> UI[桌宠 / 灵动岛 / 提醒卡片]
+    Agent --> UI
+    Agent --> Overlay[屏幕边缘反馈]
 ```
-┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-│  User Input │────▶│  ChatWindow  │────▶│   AIBridge    │
-└─────────────┘     └──────────────┘     └───────┬───────┘
-                                                  │
-                    ┌──────────────┐              │ Thread
-                    │ CommandEngine│◀─────────────┤
-                    └──────┬───────┘              │
-                           │                      ▼
-                    ┌──────▼───────┐     ┌───────────────┐
-                    │  [APP:xxx]   │     │  AI Backend   │
-                    │  [SHELL:xxx] │     │  Claude/OpenAI│
-                    │  [CLAUDE:xxx]│     └───────────────┘
-                    └──────────────┘
-```
 
-| Component | Technology |
-|-----------|------------|
-| UI Framework | PySide6 (Qt for Python) |
-| Dynamic Island | QPainter All-Paint |
-| Pet Animation | 72-frame sprite sheet |
-| AI Backend | Claude Code CLI / OpenAI API |
-| Hotkey | ctypes GetAsyncKeyState |
-| Config | JSON (`~/.buddydesk/`) |
-| Testing | pytest |
+| 模块                         | 实现                                                       |
+| ---------------------------- | ---------------------------------------------------------- |
+| 桌宠、聊天、设置与语音输入区 | Python + PySide6                                           |
+| 原生灵动岛                   | Rust + Skia / Windows Composition，位于 `winisland/`       |
+| 统一 Agent 状态与交互        | `agent_controller.py`、`agent_state.py`                    |
+| 任务、提醒与排序             | `agent_tasks.py`、`task_planner.py`                        |
+| 本地语音与 API 识别          | `agent_voice.py`、`sensevoice_asr.py`、`voice_services.py` |
+| 模型通信                     | `bridge.py`、`ai/backend.py`                               |
+| 文件解析与个人资料           | `personal_context.py`                                      |
+| 工具与权限                   | `agent_tools.py`、`engine/command_engine.py`               |
+| 前后端联动                   | Qt Signals / Slots；原生灵动岛通过本机 JSON 文件通信       |
 
----
+## 反馈与参与
 
-## Roadmap
+欢迎通过 [Issues](https://github.com/lzsobig/BuddyDesk-pet-claude/issues) 反馈。请附 Windows / Python 版本、使用的接入方式和复现步骤；API Key、个人文件和完整聊天记录请先移除。
 
-| Status | Feature | Description |
-|--------|---------|-------------|
-| ✅ | Dynamic Island | 5-state floating capsule |
-| ✅ | Pixel Pet | 72-frame animated cat |
-| ✅ | Command Execution | Natural language → system action |
-| ✅ | Dual Backend | Claude Code + OpenAI API |
-| ✅ | Multi-Conversation | Tab bar + persistence |
-| ✅ | One-Click Launcher | .bat + .vbs |
-| 🔜 | Plugin System | Community skins & commands |
-| 🔜 | Voice Interaction | Talk to your pet |
-| 🔜 | Pet Learning | Proactive reminders |
-| 🔜 | Cross-Platform | macOS / Linux |
+BuddyDesk 部分采用 [MIT 许可证](LICENSE)。原生 WinIsland 部分保留其独立的 [GPL-3.0 许可证](winisland/LICENSE)。
 
----
-
-<p align="center">
-  <img src="assets/cat_frames_v2/preview_wave.png" width="80" alt="wave">
-  <br><br>
-  <b>Made with Python and love for pixel cats</b><br>
-  <sub>Inspired by <a href="https://github.com/nicepkg/HermesPet">HermesPet</a> for macOS</sub>
-</p>
+<p align="center"><b>小橘在身边。一起，把今天做好。</b><br><sub><a href="https://lzsobig.github.io/BuddyDesk-pet-claude/">看看产品页</a> · <a href="https://github.com/lzsobig/BuddyDesk-pet-claude/archive/refs/heads/main.zip">带小橘回家</a></sub></p>
