@@ -1,0 +1,642 @@
+{
+  "ok": true,
+  "rows": [
+    {
+      "state": "idle",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\idle\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 25183,
+          "bbox": [
+            5,
+            6,
+            187,
+            202
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 1,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\idle\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 24929,
+          "bbox": [
+            6,
+            7,
+            186,
+            202
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 2,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\idle\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 25047,
+          "bbox": [
+            5,
+            6,
+            186,
+            202
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 3,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\idle\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 25019,
+          "bbox": [
+            5,
+            7,
+            187,
+            202
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 4,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\idle\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 24932,
+          "bbox": [
+            5,
+            7,
+            187,
+            202
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 5,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\idle\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 24813,
+          "bbox": [
+            6,
+            7,
+            185,
+            202
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        }
+      ]
+    },
+    {
+      "state": "thinking",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\thinking\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21924,
+          "bbox": [
+            17,
+            5,
+            175,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 1,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\thinking\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21882,
+          "bbox": [
+            17,
+            9,
+            175,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 2,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\thinking\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22394,
+          "bbox": [
+            17,
+            9,
+            174,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 3,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\thinking\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21760,
+          "bbox": [
+            19,
+            5,
+            173,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 4,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\thinking\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20492,
+          "bbox": [
+            18,
+            5,
+            174,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 5,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\thinking\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21276,
+          "bbox": [
+            20,
+            5,
+            172,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        }
+      ]
+    },
+    {
+      "state": "sleep",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\sleep\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22542,
+          "bbox": [
+            11,
+            24,
+            181,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 1,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\sleep\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 23715,
+          "bbox": [
+            10,
+            15,
+            182,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 2,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\sleep\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 24145,
+          "bbox": [
+            9,
+            11,
+            182,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 3,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\sleep\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 25709,
+          "bbox": [
+            7,
+            5,
+            185,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 4,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\sleep\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 23676,
+          "bbox": [
+            10,
+            15,
+            182,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 5,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\sleep\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22249,
+          "bbox": [
+            13,
+            27,
+            179,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        }
+      ]
+    },
+    {
+      "state": "petting",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\petting\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 23240,
+          "bbox": [
+            10,
+            7,
+            181,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 1,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\petting\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 23082,
+          "bbox": [
+            10,
+            16,
+            180,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 2,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\petting\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22728,
+          "bbox": [
+            12,
+            10,
+            179,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 3,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\petting\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22890,
+          "bbox": [
+            10,
+            17,
+            180,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 4,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\petting\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22291,
+          "bbox": [
+            13,
+            5,
+            178,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 5,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\petting\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21561,
+          "bbox": [
+            15,
+            5,
+            175,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        }
+      ]
+    },
+    {
+      "state": "drag",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\drag\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19148,
+          "bbox": [
+            25,
+            6,
+            165,
+            202
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 1,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\drag\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18779,
+          "bbox": [
+            24,
+            8,
+            167,
+            200
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 2,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\drag\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19096,
+          "bbox": [
+            23,
+            10,
+            167,
+            195
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 3,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\drag\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18953,
+          "bbox": [
+            25,
+            5,
+            165,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 4,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\drag\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18453,
+          "bbox": [
+            20,
+            5,
+            171,
+            200
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 5,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\drag\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19134,
+          "bbox": [
+            24,
+            11,
+            166,
+            199
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        }
+      ]
+    },
+    {
+      "state": "walk",
+      "expected_frames": 8,
+      "actual_frames": 8,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20525,
+          "bbox": [
+            8,
+            17,
+            183,
+            193
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 1,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21351,
+          "bbox": [
+            9,
+            14,
+            182,
+            195
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 2,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19241,
+          "bbox": [
+            6,
+            16,
+            184,
+            194
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 3,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19556,
+          "bbox": [
+            9,
+            14,
+            180,
+            194
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 4,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20738,
+          "bbox": [
+            7,
+            14,
+            183,
+            193
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 5,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20321,
+          "bbox": [
+            5,
+            14,
+            185,
+            194
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 6,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\06.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19469,
+          "bbox": [
+            8,
+            16,
+            182,
+            194
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        },
+        {
+          "index": 7,
+          "file": "D:\\\u9879\u76ee\u4ee3\u7801\u5e93\\codex\\BuddyDesk-pet-claude-recovered\\assets\\companion\\motion-release\\walk\\07.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19832,
+          "bbox": [
+            10,
+            16,
+            182,
+            194
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 0
+        }
+      ]
+    }
+  ],
+  "visual_review": "Required: inspect contact sheet and every looping preview before installation"
+}

@@ -1,5 +1,5 @@
 """
-Launcher — light warm theme matching the user's HTML mockup.
+BuddyDesk setup and backend selection.
 
 A single QDialog with: mascot, title, backend option cards (radio + brand
 SVG icon + name + description + status badge + install hint), pet name
@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 import config
 from theme import (
     BG_DEEP, BG_SUBTLE, BG_CARD, WHITE, BORDER, BORDER_SUBTLE,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_META,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_META, TEXT_ON_ACCENT,
     ACCENT, ACCENT_BRIGHT, ACCENT_SOFT, ACCENT_GLOW,
     GREEN, GREEN_SOFT, GREEN_GLOW,
     RED, RED_SOFT, GOLD, GOLD_SOFT, FONT_FAMILY, FONT_MONO,
@@ -62,10 +62,14 @@ def _load_svg_pixmap(path: str, size: int = 16) -> QPixmap:
 
 
 class _Mascot(QLabel):
-    """Floating warm-gradient circle with a cat emoji. Animates gently."""
+    """BuddyDesk mascot using the bundled orange cat sprite."""
 
     def __init__(self):
-        super().__init__("🐱")
+        super().__init__()
+        from ui.chat_widgets import _load_cat_avatar
+        avatar = _load_cat_avatar(72, pet_id=config.load_user_config().get("pet_id", "orange"), ratio=self.devicePixelRatioF())
+        if avatar is not None:
+            self.setPixmap(avatar)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setFixedSize(80, 80)
         self.setStyleSheet(f"""
@@ -86,19 +90,19 @@ class _Mascot(QLabel):
 
 
 class _LightComboBox(QComboBox):
-    """QComboBox that forces light dropdown on Windows dark mode."""
+    """Keep the popup palette consistent with the application theme."""
     def showPopup(self):
         super().showPopup()
         view = self.view()
         if view:
             from PySide6.QtGui import QPalette, QColor
             pal = QPalette()
-            pal.setColor(QPalette.ColorRole.Window, QColor("#ffffff"))
-            pal.setColor(QPalette.ColorRole.WindowText, QColor("#2a2a28"))
-            pal.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
-            pal.setColor(QPalette.ColorRole.Text, QColor("#2a2a28"))
-            pal.setColor(QPalette.ColorRole.Highlight, QColor("rgba(92,184,154,0.15)"))
-            pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#5cb89a"))
+            pal.setColor(QPalette.ColorRole.Window, QColor(BG_CARD))
+            pal.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+            pal.setColor(QPalette.ColorRole.Base, QColor(BG_CARD))
+            pal.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+            pal.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT_SOFT))
+            pal.setColor(QPalette.ColorRole.HighlightedText, QColor(ACCENT))
             view.setPalette(pal)
             vp = view.viewport()
             if vp:
@@ -179,6 +183,7 @@ class _BackendCard(QFrame):
         info.addLayout(title_row)
 
         desc_lbl = QLabel(desc)
+        desc_lbl.setWordWrap(True)
         desc_lbl.setStyleSheet(
             f"color:{TEXT_MUTED};font-size:11px;"
             f"background:transparent;border:none;"
@@ -201,21 +206,21 @@ class _BackendCard(QFrame):
         if selected:
             self.setStyleSheet(f"""
                 QFrame {{
-                    background: {WHITE};
-                    border: none;
+                    background: {ACCENT_SOFT};
+                    border: 1px solid {ACCENT};
                     border-radius: 16px;
                 }}
             """)
         else:
             self.setStyleSheet(f"""
                 QFrame {{
-                    background: {WHITE};
+                    background: {BG_CARD};
                     border: 1px solid {BORDER};
                     border-radius: 16px;
                 }}
                 QFrame:hover {{
                     border: 1.5px solid {TEXT_MUTED};
-                    background: {WHITE};
+                    background: {BG_CARD};
                 }}
             """)
         # Re-apply the hover shadow by tweaking the graphics effect each
@@ -314,7 +319,7 @@ class LauncherDialog(QDialog):
 
     def _setup_ui(self):
         self.setWindowTitle(f"{config.APP_NAME} — 启动")
-        self.setFixedSize(460, 720)
+        self.setFixedSize(500, 740)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         # Translucent so the painted rounded background shows through.
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -365,7 +370,7 @@ class LauncherDialog(QDialog):
         mascot_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mascot_row.addWidget(self._mascot)
         content_layout.addLayout(mascot_row)
-        content_layout.addSpacing(20)
+        content_layout.addSpacing(12)
 
         # Title block
         title = QLabel(config.APP_NAME)
@@ -390,7 +395,7 @@ class LauncherDialog(QDialog):
         )
         sub.setStyleSheet("background:transparent;border:none;margin-top:6px;")
         content_layout.addWidget(sub)
-        content_layout.addSpacing(28)
+        content_layout.addSpacing(18)
 
         # Decorative divider
         divider_row = QHBoxLayout()
@@ -408,6 +413,7 @@ class LauncherDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sw = QWidget()
         sw.setStyleSheet("background:transparent;")
         fl = QVBoxLayout(sw)
@@ -506,7 +512,7 @@ class LauncherDialog(QDialog):
         self.launch_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {ACCENT};
-                color: {WHITE};
+                color: {TEXT_ON_ACCENT};
                 border: none;
                 border-radius: {RADIUS_MD}px;
                 font-size: 15px;
@@ -517,7 +523,7 @@ class LauncherDialog(QDialog):
                 background: {ACCENT_BRIGHT};
             }}
             QPushButton:pressed {{
-                background: #3a9974;
+                background: {ACCENT_BRIGHT};
             }}
         """)
         self.launch_btn.clicked.connect(self._on_launch)

@@ -1,0 +1,180 @@
+# Changelog
+
+### v1.4.0
+- Refactored the underlying architecture, rendering, and window systems
+- Reworked the plugin system; older plugins require updates
+- Improved widget layout and plugin stability
+- Improved window responsiveness and software compatibility
+- Improved English and Chinese documentation and FAQs
+- Replaced the expanded side switch bars with a blurred page indicator below the island; click a dot or scroll to switch pages, and use the button beside it to close
+- Added a calendar page with holidays for the current language and month/year switching
+- Added the Ctrl+Alt+H shortcut to hide or show the island; during fullscreen auto-hide it temporarily keeps the island visible
+- Redesigned the resource usage editor, and improved the compact and ring layouts of resource usage
+- Inactivity auto-hide now only waits for widgets shown in compact mode
+- Fixed a black block after swiping to hide components in blur and cover color styles
+- Fixed known issues
+
+### v1.3.9
+- Separated inactivity and fullscreen auto-hide. Fullscreen hiding blocks manual reveal while volume and brightness adjustments can appear temporarily.
+- Added a compact-island horizontal swipe to hide or restore media and widgets without vertical movement; tapping still opens the expanded view. The compact background returns to black while content is hidden.
+- Added a short fading yellow outline only when the island hides for fullscreen.
+- Added a brightness overlay for supported built-in displays with drag adjustment, and refined compact volume spacing.
+- Fixed playback progress showing a nonzero fill at 0:00 and losing its rounded end at full progress.
+- Improved island and Settings placement across monitors with different DPI scales.
+- Improved touch input and made Settings scrolling follow the pointer without application inertia.
+- Converted fetched lyrics to Simplified Chinese when the UI is in Chinese, and added guidance for NetEase Cloud Music SMTC support.
+- Refined resource-widget rendering and progress animation.
+- Kept fullscreen volume adjustments in one stable temporary reveal instead of bouncing the island on every change.
+- Prevented rapid horizontal swipes in the expanded island from collapsing it.
+
+### v1.3.8
+- Added configurable side spacing for compact lyrics
+- Added mouse dragging to the compact volume slider
+- Added smoother progress animations for CPU and memory widgets
+- Centered plugin text in the compact island
+- Added a segmented pill-style back/forward control to Settings, with enabled, hover, and disabled feedback
+- Restored the original media skip controls and corrected their placement and hit areas
+
+### v1.3.7
+- Replaced Vulkan and the softbuffer fallback with a rewritten D3D12 renderer
+- Improved frame clearing and final animation redraws to address ghosting when expanding the island
+- Improved rendering resource synchronization during window resizing and shutdown
+- Kept the settings window open while recovering from rendering failures
+
+### v1.3.6
+- Migrated hardware rendering from D3D12 to Vulkan 1.2
+- Added software rendering as a fallback when Vulkan is unavailable or incompatible
+- Fixed known issues
+
+### v1.3.5
+- Fixed some auto-hide issues
+- Fixed touchscreen input not working
+- Fixed known issues
+- Improved the settings hierarchy by hiding dependent options when their parent setting is disabled
+- Improved the widget settings UI and animations
+- Improved the music progress bar UI
+
+### v1.3.4
+- Added selectable lyric transition animations with blur, slide, sequential fade, and random modes
+- Added double-click on the album cover to activate the source media app
+- Fixed the installer leaving WinIsland running in the background during updates
+- Kept secondary lyrics stationary while the primary lyric scrolls
+- Prevented the hidden island from capturing the mouse in fullscreen apps while retaining edge double-click reveal (#163)
+- Allowed notifications to temporarily reveal the island while hidden
+- Replaced simulated Glass and Mica captures with the actual blurred content beneath the WinIsland window
+
+### v1.3.3
+- Added independent size controls for compact and expanded states
+- Added AMLL as a lyrics source
+- Improved the word-synced lyrics animation
+- Fixed known issues
+- Improved audio spectrum analysis
+
+### v1.3.2
+- Added optional secondary lyrics in the compact island with adaptive two-line layout
+- Improved several animations
+- Fixed delayed or inconsistent playback progress after seeking
+- Improved the settings light theme
+- Improved the compact resource usage widget
+- Fixed known issues
+
+### v1.3.1
+- Added word-synced LRC lyrics with smooth per-character highlighting
+- Added QQ Music as a lyrics source
+- Added a compact CPU and memory usage widget
+- Replaced the native Windows volume flyout with the Dynamic Island volume indicator when using volume keys
+- Fixed known issues
+- Fixed a crash issue when quickly switching songs(#130)
+- Optimized performance and resource usage
+
+### v1.3.0
+- Fixed known bugs
+- Improved the notification system
+- Unified Nightly and Stable installer identities to prevent duplicate installations
+- Improved the update system
+- Added a plugin marketplace
+- Added a widget system for the compact island
+- Fixed compact lyrics being clipped when using larger fonts (#145)
+
+### v1.2.9
+- Fixed notification text and app icon display issues (#129)
+- Optimised GPU performance utilisation (#136)
+- Improved the settings interface and widget layout editor
+- Added G3 continuous corners to the Dynamic Island
+- Fixed some window issues
+- Improved the lyrics system
+- Hid the music page when no music is available
+- Fixed excessive Windows notification database writes when notification display is enabled
+- Fixed occasional GPU and memory usage spikes during music playback
+- Fixed slight text jitter during island animations
+- Fixed exaggerated lyric width rebound after restoring a hidden island
+- Added a resource usage widget for CPU and RAM monitoring
+
+### v1.2.8
+- Fixed the Dynamic Island still auto-hiding in full-screen mode while a live activity (e.g. music) is playing (#125)
+- Fixed the Dynamic Island position drifting when using MyDockFinder and other dock tools (#126)
+- Fixed the progress bar stuttering back when seeking on the system media player (#127)
+- Refactored the codebase for better maintainability
+
+### v1.2.7
+- Migrated from software rendering to hardware rendering
+- Fixed an issue where the application would still auto-hide in full-screen mode even when the auto-hide option was disabled 
+- Fixed a lyrics display issue when looping a single track
+- Added a feature to redirect to the source application when clicking on a notification
+- Fixed positional alignment issues when using MyDockFinder
+
+### v1.2.6
+- Improve island hiding settings
+- Improve glass rendering and interface spacing consistency
+- Simplify appearance settings and choose the expansion direction from available screen space
+- Optimize performance and resource usage
+- Fix notification display compatibility
+
+### v1.2.5
+- Add an optional fully hidden mode
+- Restrict audio visualization to the active media process when Windows supports process loopback, with system audio fallback
+- Fix auto-hide reveal behavior for compact overlays
+
+### v1.2.4
+- Add optional notification display
+- Package Stable and Nightly releases as installers
+- Keep the island out of the taskbar
+
+### v1.2.3
+- Add Kugou as a lyrics source, including improved lookup for English songs
+- Improve island dragging and upward hide interactions
+- Improve settings navigation, numeric input, and option menus
+- Refresh settings sidebar icons
+- Keep the music page open when media is paused
+
+### v1.2.2
+- Add configurable time, calendar, and settings widgets
+- Support drag-and-drop placement with a square snapping grid
+- Select the default expanded page based on music playback state
+
+### v1.2.1
+- Add optional right-click long-press drag to reposition the island (#92)
+- Enable window resizability to allow dynamic scale updates (#94)
+- Allow music album cover to scale smoothly on play/pause click
+- Allow island interaction when other apps are fullscreen (#95)
+- Auto-rebuild audio stream on device change (#90)
+- Use custom font for ASCII-only text (#89)
+- Quote autostart path and sync on startup (#88, #89)
+- Improve update checker reliability and beta version comparison (#89)
+
+### v1.2.0
+- Resolve stable update check failures
+- Distinguish between Stable and Beta update channels in the update available dialog title
+- Add manual update check button to settings UI
+
+### v1.1.0
+- Restore Mica background style
+- Adjust glass style capture position to horizontal offsets
+- Fix static frosted glass and Mica background updates with periodic redraws
+- Rename Dynamic Color to Album Cover and replace dominant color background with a blurred, zoomed cover art fluid effect
+- Fix play/pause button transition afterimages
+- Fix lyric text vertical jitter during expand/collapse transitions
+
+
+### v1.0.0
+- Initial release

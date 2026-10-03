@@ -699,12 +699,6 @@ class CommandEngine:
             else:
                 results.append(self.execute_claude_code(instruction))
 
-        # If no tagged commands found, try natural language parsing
-        if not results:
-            result = self._try_natural_command(ai_response)
-            if result:
-                results.append(result)
-
         return results
 
     @staticmethod

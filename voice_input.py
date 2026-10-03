@@ -33,9 +33,11 @@ class VoiceInputController(QObject):
     # 录音采集线程发出，主线程槽（VoiceCapsule.push_level）消费。
     level_emitted = Signal(float)
 
-    def __init__(self, sample_rate: int = 16000):
+    def __init__(self, sample_rate: int = 16000, settings: dict | None = None):
         super().__init__()
         self.sample_rate = sample_rate
+        self._settings = dict(settings or {})
+        self.last_error = ""
         self._recording = False
         self._processing = False
         self._stream = None
@@ -47,14 +49,32 @@ class VoiceInputController(QObject):
 
     def _check_dependencies(self) -> bool:
         try:
-            import sounddevice  # noqa: F401
-            import sensevoice_asr
-            return sensevoice_asr.is_model_available()
-        except (ImportError, OSError, ValueError):
+            from voice_services import find_model_dir, missing_components, validate_cloud_config
+            local = self._settings.get("voice_mode", "local") != "cloud"
+            missing = missing_components(local)
+            if missing:
+                self.last_error = "语音组件缺失：" + ", ".join(missing)
+                return False
+            if local and find_model_dir(self._settings) is None:
+                self.last_error = "请在设置 → 语音中一键安装本地模型"
+                return False
+            if not local:
+                validate_cloud_config(self._settings)
+            self.last_error = ""
+            return True
+        except (ImportError, OSError, ValueError) as error:
+            self.last_error = str(error)
             return False
 
     def is_available(self) -> bool:
+        self._available = self._check_dependencies()
         return self._available
+
+    def update_settings(self, settings: dict) -> None:
+        if self._recording:
+            self.cancel()
+        self._settings = dict(settings)
+        self._available = self._check_dependencies()
 
     def set_callbacks(self, on_recognized: Callable[[str], None],
                       on_state: Callable[[str], None]):
@@ -65,7 +85,7 @@ class VoiceInputController(QObject):
 
     def begin_recording(self) -> bool:
         """开始录音。返回是否成功。"""
-        if not self._available:
+        if not self.is_available():
             self._emit_state('error')
             return False
         if self._recording or self._processing:
@@ -109,7 +129,7 @@ class VoiceInputController(QObject):
             if self._chunks else np.zeros(0)
         )
         threading.Thread(
-            target=self._recognize_async, args=(audio,), daemon=True
+            target=self._recognize_async, args=(audio, dict(self._settings)), daemon=True
         ).start()
 
     def _on_audio_chunk(self, indata, frames, time, status):
@@ -132,7 +152,7 @@ class VoiceInputController(QObject):
             import logging
             logging.getLogger(__name__).debug("audio RMS calc error: %s", e)
 
-    def _recognize_async(self, audio: np.ndarray):
+    def _recognize_async(self, audio: np.ndarray, settings: dict | None = None):
         """后台线程调用 ASR。"""
         try:
             import sensevoice_asr
@@ -144,14 +164,24 @@ class VoiceInputController(QObject):
                 self._emit_state('ready')
                 return
             logger.debug("ASR: calling transcribe...")
-            text = sensevoice_asr.transcribe(audio, self.sample_rate, language='zh')
+            settings = dict(settings if settings is not None else self._settings)
+            if settings.get("voice_mode", "local") == "cloud":
+                from voice_services import transcribe_cloud
+                text = transcribe_cloud(audio, self.sample_rate, settings)
+            else:
+                from voice_services import find_model_dir
+                directory = find_model_dir(settings)
+                if directory is None:
+                    raise ValueError("本地模型未就绪，请在设置 → 语音中安装")
+                text = sensevoice_asr.transcribe(audio, self.sample_rate, language='zh', model_dir=str(directory))
             logger.debug("ASR result: '%s'", text)
             if text and self._on_recognized:
                 logger.debug("calling _on_recognized with text...")
                 self._on_recognized(text)
                 logger.debug("_on_recognized returned")
         except Exception as e:
-            logger.error("ASR error: %s", e, exc_info=True)
+            self.last_error = str(e)
+            logger.error("ASR error: %s", type(e).__name__)
             self._processing = False
             self._emit_state('error')
             return

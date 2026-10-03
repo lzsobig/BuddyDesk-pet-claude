@@ -1,81 +1,52 @@
-"""
-Design tokens + global QSS — BuddyDesk Light Theme.
+"""Shared design tokens and Qt stylesheet for BuddyDesk."""
 
-Single source of truth for the visual system. All windows use the global
-QSS from get_stylesheet(); per-widget setStyleSheet calls are limited to
-small layout adjustments (margins, spacing) and never to backgrounds or
-borders, which would re-introduce QSS color leakage we just removed.
-"""
-
-# ── Background layers (warm light) ──
-BG_DEEP = "#f8f6f1"        # page background
-BG_PRIMARY = "#f8f6f1"     # alias
-BG_SUBTLE = "#f2efe9"       # subtle surfaces (input fields, badges)
-BG_CARD = "#ffffff"        # raised cards
-
-# ── Text hierarchy ──
-TEXT_PRIMARY = "#2a2a28"
-TEXT_SECONDARY = "#4a4a46"
-TEXT_MUTED = "#9a978e"
-TEXT_META = "#b5b2a8"
+BG_DEEP = "#f6f7f9"
+BG_PRIMARY = BG_DEEP
+BG_SUBTLE = "#eceff3"
+BG_CARD = "#ffffff"
+TEXT_PRIMARY = "#222933"
+TEXT_SECONDARY = "#4f5967"
+TEXT_MUTED = "#667181"
+TEXT_META = "#788292"
 TEXT_ON_ACCENT = "#ffffff"
-
-# ── Accents ──
-ACCENT = "#5cb89a"          # primary sage green
-ACCENT_BRIGHT = "#4aaf88"
-ACCENT_GLOW = "rgba(92,184,154,0.25)"
-ACCENT_SOFT = "rgba(92,184,154,0.10)"
-GREEN = "#4aaf88"
-GREEN_GLOW = "rgba(74,175,136,0.20)"
-GREEN_SOFT = "rgba(74,175,136,0.08)"
-RED = "#d47a72"
-RED_SOFT = "rgba(212,122,114,0.08)"
-AMBER = "#b8a66a"
-AMBER_SOFT = "rgba(184,166,106,0.10)"
-GOLD = "#b8a66a"
-GOLD_SOFT = "rgba(184,166,106,0.10)"
-# DANGER — error/warning state (slightly more saturated than RED)
-DANGER = "#d47a72"
-DANGER_SOFT = "rgba(212,122,114,0.10)"
+ACCENT = "#a96231"
+ACCENT_BRIGHT = "#925126"
+ACCENT_GLOW = "rgba(169,98,49,0.25)"
+ACCENT_SOFT = "rgba(169,98,49,0.10)"
+GREEN = "#39805c"
+GREEN_GLOW = "rgba(144,185,155,0.20)"
+GREEN_SOFT = "rgba(144,185,155,0.10)"
+RED = "#b24d4c"
+RED_SOFT = "rgba(178,77,76,0.07)"
+AMBER = "#e8be81"
+AMBER_SOFT = "rgba(232,190,129,0.10)"
+GOLD = AMBER
+GOLD_SOFT = AMBER_SOFT
+DANGER = RED
+DANGER_SOFT = RED_SOFT
 WHITE = "#ffffff"
-
-# ── Warm cat-tone accents (mascot only) ──
-WARM_CAT_LIGHT = "#fff7e6"
-WARM_CAT_MID = "#fef3d6"
-WARM_CAT_DEEP = "#ffe8b8"
-WARM_CAT_TEXT = "#c8845e"
-
-# ── Typography ──
-FONT_FAMILY = "'Inter', 'Noto Sans SC', 'Segoe UI', system-ui, sans-serif"
-FONT_MONO = "'JetBrains Mono', 'Cascadia Code', Consolas, monospace"
-
-# ── Shadow tiers (used as QSS box-shadow / QGraphicsDropShadowEffect) ──
-SHADOW_SM = "0 1px 2px rgba(0,0,0,0.04)"
-SHADOW_MD = "0 2px 4px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.06)"
-SHADOW_LG = "0 4px 8px rgba(0,0,0,0.06), 0 8px 28px rgba(0,0,0,0.10)"
-SHADOW_INSET = "inset 0 1px 0 rgba(255,255,255,0.8)"
-
-# ── Easing curves (informational; used as QSS cubic-bezier strings) ──
+WARM_CAT_LIGHT = "#fff8f0"
+WARM_CAT_MID = "#fbe9d6"
+WARM_CAT_DEEP = "#f7dab8"
+WARM_CAT_TEXT = ACCENT
+FONT_FAMILY = "'Microsoft YaHei UI', 'Segoe UI', sans-serif"
+FONT_MONO = "'Cascadia Code', Consolas, monospace"
+SHADOW_SM = "0 1px 2px rgba(0,0,0,0.20)"
+SHADOW_MD = "0 4px 16px rgba(28,40,56,0.08)"
+SHADOW_LG = "0 8px 28px rgba(28,40,56,0.12)"
+SHADOW_INSET = "inset 0 1px 0 rgba(255,255,255,0.04)"
 EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)"
 EASE_SPRING = "cubic-bezier(0.34, 1.56, 0.64, 1)"
-
-# ── Border ──
-BORDER = "#e8e5dd"
-BORDER_SUBTLE = "#efede6"
-
-# ── Radius (统一圆角) ──
-RADIUS_SM = 10       # small chips, badges
-RADIUS_MD = 16       # cards, inputs, list items (was 14)
-RADIUS_LG = 22       # primary button (was 20)
+BORDER = "#d9dfe7"
+BORDER_SUBTLE = "#e5e9ef"
+RADIUS_SM = 10
+RADIUS_MD = 16
+RADIUS_LG = 22
 RADIUS_PILL = 9999
-
-# ── Animation tokens ──
-ANIM_FADE_MS = 200          # fade-in / fade-out duration
-ANIM_SPRING_MS = 450        # spring expand / collapse
+ANIM_FADE_MS = 200
+ANIM_SPRING_MS = 450
 ANIM_EASING_SHOW = "OutCubic"
 ANIM_EASING_SPRING = "OutBack"
-
-# ── Sizing ──
 BTN_HEIGHT_PRIMARY = 48
 BTN_HEIGHT_SECONDARY = 40
 INPUT_HEIGHT = 44
@@ -130,7 +101,7 @@ def get_stylesheet() -> str:
     }}
     QPushButton:pressed {{
         background: {ACCENT};
-        color: {WHITE};
+        color: {TEXT_ON_ACCENT};
     }}
 
     /* ── Inputs ── */
@@ -241,7 +212,35 @@ def get_stylesheet() -> str:
         border: none;
     }}
 
+    QToolTip {{
+        background-color: #f9fafb;
+        color: #303640;
+        border: 1px solid #d9dfe7;
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-family: "Microsoft YaHei UI";
+        font-size: 12px;
+    }}
+
     /* ── Menus ── */
+    QCheckBox {{
+        background:transparent;
+        border:none;
+        spacing:8px;
+        color:{TEXT_SECONDARY};
+    }}
+    QCheckBox::indicator {{
+        width:15px;
+        height:15px;
+        border:1px solid {BORDER};
+        border-radius:4px;
+        background:{BG_SUBTLE};
+    }}
+    QCheckBox::indicator:checked {{
+        background:{ACCENT};
+        border-color:{ACCENT};
+    }}
+
     QMenu {{
         background-color: {BG_CARD};
         color: {TEXT_PRIMARY};

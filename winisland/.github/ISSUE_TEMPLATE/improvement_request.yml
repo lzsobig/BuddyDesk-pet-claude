@@ -1,0 +1,87 @@
+name: Improvement Request
+description: Request improvements to existing behavior or features
+title: "[Improve] "
+labels: ["improvement", "pending"]
+assignees: []
+body:
+  - type: input
+    id: area
+    attributes:
+      label: Area
+      description: Which module or feature would you like to improve?
+      placeholder: "For example: Media controls, Notifications, Appearance, Lyrics"
+    validations:
+      required: false
+
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current behavior
+      description: What is the current experience, and what feels inconvenient?
+      placeholder: Describe what it currently does and why it feels lacking
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_change
+    attributes:
+      label: Proposed change
+      description: How would you like it to work instead?
+      placeholder: Describe your idea for the improved experience
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefit
+    attributes:
+      label: Benefit
+      description: What would improve for you or other users?
+      placeholder: "For example: Easier to use, faster, looks better"
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Impact on existing behavior
+      description: "Will this change affect your current settings or how you use the app?"
+      placeholder: Describe any potential side effects or settings that might need adjusting
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Related issues, links, or screenshots
+      placeholder: Related links
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes
+      description: Provide any other relevant information
+      placeholder: Additional notes
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: check-list
+    attributes:
+      label: Checklist
+      description: Check all inspections according to the checklist below.
+      options:
+        - label: "I'm running the official release build (GitHub Releases), not a fork or third-party build"
+          required: false
+        - label: "I confirm that I'm running the latest version, whether stable or nightly"
+          required: false
+        - label: "I confirm that I have provided my Windows version and build number (e.g. Windows 11 23H2, build 22631)"
+          required: false
+        - label: "I confirm that I have searched for existing issues and this is not a duplicate"
+          required: false
+        - label: "I confirm that I have not read these checkboxes and therefore I just ticked them all."
+          required: false
+        - label: "I am well aware that if the issue is not filled out correctly and completely, it will simply be closed without any response or reason."
+          required: false

@@ -9,15 +9,14 @@ import re
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer, Signal, QRectF
+from PySide6.QtCore import Qt, QTimer, Signal, QRectF, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QColor, QPainter, QPalette
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget,
-    QPushButton, QScrollArea, QApplication, QSizePolicy,
+    QPushButton, QScrollArea, QApplication, QSizePolicy, QMenu, QListWidget, QListWidgetItem, QSizeGrip,
 )
 
 from bridge import AIBridge
-from ui.history_panel import HistoryPanel
 from theme import (
     BG_DEEP, BG_SUBTLE, BG_CARD, WHITE, BORDER, BORDER_SUBTLE,
     TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_META, TEXT_ON_ACCENT,
@@ -29,7 +28,7 @@ from config import ASSETS_DIR as _ASSETS, FONT_SCALE_LEVELS
 import config as _cfg
 from ui.markdown_renderer import MarkdownRenderer
 from ui.chat_widgets import (
-    ChatBaseWindow, ChatInput, _MessageBubble, _TypingBubble,
+    ChatBaseWindow, ChatInput, SidebarButton, _MessageBubble, _TypingBubble,
     _CommandResult, _make_triangle_icon, _load_cat_avatar,
 )
 
@@ -57,6 +56,8 @@ class ChatWindow(ChatBaseWindow):
         self._typing_widget: _TypingBubble | None = None
         self._live_widget: _MessageBubble | None = None
         self._live_text: str = ""
+        self._error_card = None
+        self._sidebar_width = 0
         # Streaming render throttle: batch chunks, render at most every 80ms
         self._render_timer = QTimer()
         self._render_timer.setSingleShot(True)
@@ -70,8 +71,8 @@ class ChatWindow(ChatBaseWindow):
         self._conversations: list[dict] = []  # [{id, title, messages, created_at, updated_at}, ...]
         self._active_idx: int = 0  # index into _conversations
 
-        self.setMinimumSize(400, 500)
-        self.resize(480, 640)
+        self.setMinimumSize(420, 420)
+        self.resize(480, 600)
         self.setAcceptDrops(True)
         self.setWindowTitle("BuddyDesk Chat")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -105,7 +106,7 @@ class ChatWindow(ChatBaseWindow):
     # ── UI ──────────────────────────────────────────────────────
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(0)
 
         root.addWidget(self._build_header())
@@ -115,49 +116,50 @@ class ChatWindow(ChatBaseWindow):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        # History panel (slide-in sidebar)
-        self._history_panel = HistoryPanel()
-        self._history_panel.rename_requested.connect(self._on_history_rename)
-        self._history_panel.delete_requested.connect(self._on_history_delete)
-        self._history_panel.restore_requested.connect(self._on_history_restore)
-        self._history_panel.new_requested.connect(self._add_conversation)
-        self._history_panel.closed.connect(self._on_history_closed)
-        body.addWidget(self._history_panel)
+        self._session_panel = QFrame()
+        self._session_panel.setFixedWidth(190)
+        self._session_panel.setObjectName("sessionPanel")
+        self._session_panel.setStyleSheet(f"QFrame#sessionPanel {{background:{BG_SUBTLE};border:none;}}")
+        navigation = QVBoxLayout(self._session_panel)
+        navigation.setContentsMargins(10, 14, 10, 14)
+        heading = QLabel("会话")
+        heading.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;padding:4px;background:transparent;")
+        navigation.addWidget(heading)
+        self._session_list = QListWidget()
+        self._session_list.setWordWrap(True)
+        self._session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._session_list.setStyleSheet(f"QListWidget {{background:transparent;border:none;outline:none;color:{TEXT_SECONDARY};font-size:12px;}}"
+            f"QListWidget::item {{padding:10px 8px;border-radius:6px;}}"
+            f"QListWidget::item:selected {{background:{BG_CARD};color:{TEXT_PRIMARY};}}"
+            f"QListWidget::item:hover {{background:{BG_CARD};}}")
+        self._session_list.itemClicked.connect(self._select_session)
+        self._session_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._session_list.customContextMenuRequested.connect(self._session_menu)
+        navigation.addWidget(self._session_list)
+        self._session_panel.hide()
+        body.addWidget(self._session_panel)
 
         # Right side: tab bar + messages + input
         content = QVBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(0)
 
-        # ── Tab bar (between header and scroll area) ──
-        self._tab_bar_container = QFrame()
-        self._tab_bar_container.setFixedHeight(36)
-        self._tab_bar_container.setStyleSheet(
-            f"QFrame {{ background:{BG_DEEP}; border:none; }}"
-        )
-        self._tab_bar_layout = QHBoxLayout(self._tab_bar_container)
-        self._tab_bar_layout.setContentsMargins(12, 4, 8, 0)
-        self._tab_bar_layout.setSpacing(4)
-        self._tab_bar_layout.addStretch(1)
-        content.addWidget(self._tab_bar_container)
-
         # Scrollable message area
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setStyleSheet(
-            f"QScrollArea {{ background:{BG_DEEP};border:none; }}"
+            "QScrollArea { background:transparent;border:none; }"
         )
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self._message_container = QWidget()
-        self._message_container.setStyleSheet(
-            f"background:{BG_DEEP};border:none;"
-        )
+        self._message_container.setStyleSheet("background:transparent;border:none;")
+        self._scroll.viewport().setAutoFillBackground(False)
         self._messages_layout = QVBoxLayout(self._message_container)
-        self._messages_layout.setContentsMargins(18, 16, 18, 16)
-        self._messages_layout.setSpacing(14)
+        self._messages_layout.setContentsMargins(24, 22, 24, 20)
+        self._messages_layout.setSpacing(20)
         self._messages_layout.addStretch(1)
 
         self._scroll.setWidget(self._message_container)
@@ -167,203 +169,126 @@ class ChatWindow(ChatBaseWindow):
         body.addLayout(content, 1)
 
         root.addLayout(body, 1)
+        self._resize_grip = QSizeGrip(self)
+        self._resize_grip.setFixedSize(14, 14)
+        self._resize_grip.setStyleSheet("background:transparent;")
+        self._resize_grip.setToolTip("拖动调整窗口大小")
 
     def _build_header(self) -> QFrame:
         hdr = QFrame()
-        hdr.setFixedHeight(56)
+        hdr.setObjectName("chatHeader")
+        hdr.setFixedHeight(58)
         hdr.setStyleSheet(
-            f"QFrame {{ background:{WHITE};border:none;border-bottom:1px solid {BORDER}; }}"
+            f"QFrame#chatHeader {{ background:transparent;border:none;"
+            f"border-bottom:1px solid {BORDER_SUBTLE}; }}"
         )
-        hl = QHBoxLayout(hdr)
-        hl.setContentsMargins(18, 0, 14, 0)
-        hl.setSpacing(10)
-
-        # Header avatar — orange cat sprite if available, fallback to gradient+emoji
+        layout = QHBoxLayout(hdr)
+        layout.setContentsMargins(22, 10, 16, 10)
+        layout.setSpacing(10)
+        self._sidebar_button = SidebarButton()
+        self._sidebar_button.clicked.connect(self._toggle_history)
+        layout.addWidget(self._sidebar_button)
         avatar = QLabel()
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pet_avatar = avatar
         avatar.setFixedSize(28, 28)
-        cat_pm = _load_cat_avatar(28)
-        if cat_pm is not None:
-            avatar.setPixmap(cat_pm)
-            avatar.setStyleSheet(
-                f"border-radius:14px;border:1px solid {BORDER};"
-                f"background:{ACCENT_SOFT};"
-            )
-        else:
-            avatar.setText("🐱")
-            avatar.setStyleSheet(
-                f"background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {ACCENT},stop:1 {GREEN});"
-                f"border-radius:14px;font-size:14px;"
-            )
-        hl.addWidget(avatar)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar.setPixmap(_load_cat_avatar(28, pet_id=self.bridge.user_config.get("pet_id", "orange"), ratio=self.devicePixelRatioF()) or _make_triangle_icon(28))
+        layout.addWidget(avatar)
+        self._pet_title = QLabel(str(self.bridge.user_config.get("pet_name", "小橘")))
+        self._pet_title.setTextFormat(Qt.TextFormat.PlainText)
+        self._pet_title.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:14px;font-weight:600;")
+        layout.addWidget(self._pet_title)
+        self._conversation_title = QLabel("新对话")
+        self._conversation_title.setTextFormat(Qt.TextFormat.PlainText)
+        self._conversation_title.setMinimumWidth(0)
+        self._conversation_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._conversation_title.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
+        layout.addWidget(self._conversation_title, 1)
+        new_chat = QPushButton("＋")
+        new_chat.setFixedSize(28, 28)
+        new_chat.setAccessibleName("新建对话")
+        new_chat.setToolTip("新建对话")
+        new_chat.setStyleSheet(f"QPushButton {{background:transparent;border:none;padding:0;color:{TEXT_MUTED};font-size:19px;}}"
+                              f"QPushButton:hover {{background:{BG_CARD};border-radius:7px;}}")
+        new_chat.clicked.connect(self._add_conversation)
+        layout.addWidget(new_chat)
 
-        title_col = QVBoxLayout()
-        title_col.setSpacing(0)
-        title = QLabel("BuddyDesk")
-        title.setStyleSheet(
-            f"color:{TEXT_PRIMARY};font-size:13px;font-weight:600;"
-            f"background:transparent;border:none;"
+        self._status = QLabel()
+        self._status.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
+        self._status.hide()
+        layout.addWidget(self._status)
+        more = QPushButton("···")
+        more.setFixedSize(30, 30)
+        more.setToolTip("对话、历史和设置")
+        more.setAccessibleName("对话、历史和设置")
+        more.setCursor(Qt.CursorShape.PointingHandCursor)
+        more.setStyleSheet(
+            f"QPushButton {{ background:transparent;color:{TEXT_MUTED};"
+            f"border:none;padding:0;font-size:18px; }}"
+            f"QPushButton:hover {{ background:{BG_CARD};border-radius:8px; }}"
         )
-        sub = QLabel("Windows AI 伴侣")
-        sub.setStyleSheet(
-            f"color:{TEXT_META};font-size:10px;background:transparent;border:none;"
-        )
-        title_col.addWidget(title)
-        title_col.addWidget(sub)
-        hl.addLayout(title_col)
-        hl.addStretch()
-
-        self._status_dot = QLabel()
-        self._status_dot.setFixedSize(6, 6)
-        self._status_dot.setStyleSheet(f"background:{GREEN};border-radius:3px;")
-        hl.addWidget(self._status_dot)
-
-        self._status = QLabel("Ready")
-        self._status.setStyleSheet(
-            f"color:{GREEN};font-size:11px;font-weight:600;background:transparent;border:none;"
-        )
-        hl.addWidget(self._status)
-
-        # History button
-        hist_btn = QPushButton("历史")
-        hist_btn.setFixedSize(52, 28)
-        hist_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        hist_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(232,229,221,0.5); color: #4a4a46;
-                border: 1px solid rgba(232,229,221,0.8); border-radius: 8px;
-                font-size: 12px; font-weight: 600; padding: 2px 4px;
-            }}
-            QPushButton:hover {{ background: {ACCENT_SOFT}; color: {ACCENT}; border-color: {ACCENT}; }}
-        """)
-        hist_btn.clicked.connect(self._toggle_history)
-        hl.addWidget(hist_btn)
-
-        clr = QPushButton("清空")
-        clr.setFixedSize(52, 28)
-        clr.setCursor(Qt.CursorShape.PointingHandCursor)
-        clr.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(232,229,221,0.5); color: #4a4a46;
-                border: 1px solid rgba(232,229,221,0.8); border-radius: 8px;
-                font-size: 12px; font-weight: 600; padding: 2px 4px;
-            }}
-            QPushButton:hover {{ background: {ACCENT_SOFT}; color: {ACCENT}; border-color: {ACCENT}; }}
-        """)
-        clr.clicked.connect(self._clear)
-        hl.addWidget(clr)
-
-        # Settings gear button
-        gear_btn = QPushButton("设置")
-        gear_btn.setFixedSize(52, 28)
-        gear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        gear_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(232,229,221,0.5); color: #4a4a46;
-                border: 1px solid rgba(232,229,221,0.8); border-radius: 8px;
-                font-size: 12px; font-weight: 600; padding: 2px 4px;
-            }}
-            QPushButton:hover {{ background: {ACCENT_SOFT}; color: {ACCENT}; border-color: {ACCENT}; }}
-        """)
-        gear_btn.clicked.connect(self.settings_requested.emit)
-        hl.addWidget(gear_btn)
+        menu = QMenu(more)
+        menu.addAction("新建对话", self._add_conversation)
+        menu.addAction("归档当前会话", lambda: self._close_conversation(self._active_idx))
+        menu.addSeparator()
+        menu.addAction("重新生成回答    Ctrl+R", self._regenerate)
+        menu.addAction("清空当前对话    Ctrl+L", self._clear)
+        menu.addSeparator()
+        menu.addAction("设置", self.settings_requested.emit)
+        more.clicked.connect(lambda: menu.exec(more.mapToGlobal(more.rect().bottomLeft())))
+        layout.addWidget(more)
 
         from ui.icon_widgets import WindowControlButton
-        minimize = WindowControlButton(
-            "min", color=ACCENT, hover_bg=ACCENT_SOFT, hover_fg=ACCENT,
-        )
+        minimize = WindowControlButton("min", color=TEXT_MUTED, hover_bg=BG_CARD, hover_fg=TEXT_PRIMARY)
         minimize.setToolTip("最小化")
         minimize.mousePressEvent = lambda e: self.showMinimized() if e.button() == Qt.MouseButton.LeftButton else None
-        hl.addWidget(minimize)
-
-        cls = WindowControlButton(
-            "close", color=ACCENT, hover_bg=RED_SOFT, hover_fg=RED,
-        )
-        cls.setToolTip("关闭")
-        cls.mousePressEvent = lambda e: self.close() if e.button() == Qt.MouseButton.LeftButton else None
-        hl.addWidget(cls)
-
+        layout.addWidget(minimize)
+        close = WindowControlButton("close", color=TEXT_MUTED, hover_bg=RED_SOFT, hover_fg=RED)
+        close.setToolTip("关闭")
+        close.mousePressEvent = lambda e: self.close() if e.button() == Qt.MouseButton.LeftButton else None
+        layout.addWidget(close)
         return hdr
 
     def _build_input(self) -> QFrame:
         wrap = QFrame()
-        wrap.setStyleSheet(
-            f"QFrame {{ background:{WHITE};border:none;border-top:1px solid {BORDER}; }}"
-        )
+        wrap.setObjectName("composerWrap")
+        wrap.setStyleSheet("QFrame#composerWrap {background:transparent;border:none;}")
         layout = QVBoxLayout(wrap)
-        layout.setContentsMargins(18, 12, 18, 14)
-        layout.setSpacing(6)
-
-        # Input pill
+        layout.setContentsMargins(22, 12, 22, 20)
+        self._integration_notice = QLabel()
+        self._integration_notice.setTextFormat(Qt.TextFormat.PlainText)
+        self._integration_notice.setWordWrap(True)
+        self._integration_notice.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;background:transparent;")
+        self._integration_notice.hide()
+        layout.addWidget(self._integration_notice)
         pill = QFrame()
-        pill.setStyleSheet(f"""
-            QFrame {{
-                background: {BG_SUBTLE};
-                border: 1.5px solid {BORDER};
-                border-radius: {RADIUS_MD}px;
-            }}
-        """)
-        pill_l = QHBoxLayout(pill)
-        pill_l.setContentsMargins(14, 4, 4, 4)
-        pill_l.setSpacing(8)
-
-        self._input = ChatInput("说点什么…")
+        pill.setObjectName("composer")
+        pill.setStyleSheet(
+            f"QFrame#composer {{ background:{BG_CARD};border:1px solid {BORDER};"
+            f"border-radius:14px; }}"
+        )
+        composer = QHBoxLayout(pill)
+        composer.setContentsMargins(16, 9, 9, 9)
+        composer.setSpacing(4)
+        self._input = ChatInput("发送消息…")
+        self._input.setAccessibleName("消息输入框")
         self._input.send_signal.connect(self._send)
-        pill_l.addWidget(self._input, 1)
-
-        from ui.icon_widgets import VoiceButton
+        composer.addWidget(self._input, 1)
+        composer.addSpacing(8)
+        from ui.icon_widgets import VoiceButton, IslandActionButton
         self._voice_btn = VoiceButton()
         self._voice_btn.setToolTip("语音输入（Ctrl+Shift+V）")
-        self._voice_btn.setAccessibleName("voiceInputButton")
+        self._voice_btn.setAccessibleName("语音输入")
         self._voice_btn.clicked.connect(self._on_voice_button)
-        pill_l.addWidget(self._voice_btn)
-
-        # Painted triangle icon — no font dependency
-        self._send_btn = QPushButton()
-        self._send_btn.setFixedSize(34, 34)
-        self._send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._send_btn.setToolTip("发送")
-        self._send_btn.setIcon(_make_triangle_icon(34))
-        self._send_btn.setIconSize(self._send_btn.size())
-        self._send_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {ACCENT}; color: {WHITE};
-                border: none; border-radius: 10px;
-            }}
-            QPushButton:hover {{ background: {ACCENT_BRIGHT}; }}
-            QPushButton:disabled {{ background: {BORDER}; color: {TEXT_MUTED}; }}
-        """)
-        self._send_btn.clicked.connect(self._send)
-        pill_l.addWidget(self._send_btn)
+        composer.addWidget(self._voice_btn, 0, Qt.AlignmentFlag.AlignBottom)
+        self._send_btn = IslandActionButton("send")
+        self._send_btn.setAccessibleName("发送消息")
+        self._send_btn.setToolTip("发送消息（Enter）")
+        self._input.textChanged.connect(self._update_send_button)
+        self._update_send_button()
+        self._send_btn.clicked.connect(self._send_or_stop)
+        composer.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignBottom)
         layout.addWidget(pill)
-
-        # Hint row
-        hint = QHBoxLayout()
-        hint.setContentsMargins(4, 0, 4, 0)
-        h1 = QLabel(
-            f'<span style="color:{TEXT_META};font-size:10px;">'
-            f'<kbd style="background:{WHITE};border:1px solid {BORDER};'
-            f'border-radius:4px;padding:1px 5px;font-family:{FONT_MONO};'
-            f'font-size:10px;">Enter</kbd> 发送 · <kbd style="background:{WHITE};'
-            f'border:1px solid {BORDER};border-radius:4px;padding:1px 5px;'
-            f'font-family:{FONT_MONO};font-size:10px;">Ctrl+L</kbd> 清空 · '
-            f'<kbd style="background:{WHITE};border:1px solid {BORDER};'
-            f'border-radius:4px;padding:1px 5px;font-family:{FONT_MONO};'
-            f'font-size:10px;">Ctrl+R</kbd> 重新生成</span>'
-        )
-        h1.setStyleSheet("background:transparent;border:none;")
-        h2 = QLabel(
-            f'<span style="color:{TEXT_META};font-size:10px;">'
-            f'<kbd style="background:{WHITE};border:1px solid {BORDER};'
-            f'border-radius:4px;padding:1px 5px;font-family:{FONT_MONO};'
-            f'font-size:10px;">Ctrl+Shift+H</kbd> 呼出/隐藏</span>'
-        )
-        h2.setStyleSheet("background:transparent;border:none;")
-        hint.addWidget(h1)
-        hint.addStretch()
-        hint.addWidget(h2)
-        layout.addLayout(hint)
-
         return wrap
 
     # ── wire ──
@@ -389,7 +314,8 @@ class ChatWindow(ChatBaseWindow):
         main_app = self._find_main_app()
         voice = getattr(main_app, "voice_input", None) if main_app else None
         if voice is None or not voice.is_available():
-            self._sys("⚠️ 语音输入不可用，请检查麦克风和 SenseVoice 模型")
+            self._sys(getattr(voice, "last_error", "") or "请在设置 → 语音中配置识别方式")
+            self.settings_requested.emit()
             return
         if voice._recording:
             main_app._do_voice_stop()
@@ -515,6 +441,10 @@ class ChatWindow(ChatBaseWindow):
 
     # ── message ops ──
     def _append_widget(self, w: QWidget):
+        if isinstance(w, _MessageBubble):
+            width = max(180, self._scroll.viewport().width() - 48)
+            w.setMaximumWidth(width)
+            w._bubble.setMaximumWidth(width if w._role == "ai" else int(width * 0.88))
         idx = self._messages_layout.count() - 1
         if idx < 0:
             self._messages_layout.addWidget(w)
@@ -535,119 +465,87 @@ class ChatWindow(ChatBaseWindow):
         bar.setValue(bar.maximum())
 
     def _sys_welcome(self):
-        self._sys(
-            '你好呀！我是小橘，你的 Windows AI 伴侣。\n'
-            '• 说"打开微信" 打开应用\n'
-            '• 说"查看IP" 执行系统命令\n'
-            '• 说"帮我创建项目" 使用 Claude Code\n\n'
-            f"Backend: {self.bridge.backend.get_name()}"
-        )
-
-    # ─────────────────────────────────────────────────────────────────
-    # Tab bar management
-    # ─────────────────────────────────────────────────────────────────
+        if getattr(self, "_welcome_card", None) is not None:
+            return
+        card = QFrame()
+        card.setStyleSheet("background:transparent;border:none;")
+        area = QVBoxLayout(card)
+        area.setContentsMargins(4, 56, 4, 20)
+        title = QLabel("有什么想一起做的？")
+        title.setStyleSheet(f"color:{TEXT_PRIMARY};font-size:20px;font-weight:600;")
+        hint = QLabel("问个问题，或从一个想法开始。")
+        hint.setStyleSheet(f"color:{TEXT_MUTED};font-size:12px;padding-top:6px;")
+        area.addWidget(title)
+        area.addWidget(hint)
+        self._welcome_card = card
+        self._append_widget(card)
 
     def _update_tab_bar(self) -> None:
-        """Rebuild the tab bar to reflect the current conversations list."""
-        # Clear existing widgets from the layout
-        while self._tab_bar_layout.count():
-            item = self._tab_bar_layout.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
+        if 0 <= self._active_idx < len(self._conversations):
+            title = self._conversations[self._active_idx].get("title", "新对话")
+            self._conversation_title.setText(title)
+            self._conversation_title.setToolTip(title)
+        self._session_list.clear()
+        for index, conversation in enumerate(self._conversations):
+            item = QListWidgetItem(conversation.get("title", "新对话"))
+            item.setToolTip(item.text())
+            item.setData(Qt.ItemDataRole.UserRole, ("active", index))
+            self._session_list.addItem(item)
+            if index == self._active_idx:
+                self._session_list.setCurrentItem(item)
+        archived = _cfg.load_archive()
+        if archived:
+            heading = QListWidgetItem("已归档")
+            heading.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._session_list.addItem(heading)
+            for index, conversation in enumerate(archived):
+                item = QListWidgetItem(conversation.get("title", "历史对话"))
+                item.setData(Qt.ItemDataRole.UserRole, ("archive", index))
+                item.setToolTip(item.text())
+                self._session_list.addItem(item)
 
-        # Tab buttons for each conversation
-        for idx, conv in enumerate(self._conversations):
-            title = conv.get("title", "新对话")
-            is_active = (idx == self._active_idx)
+    def _select_session(self, item):
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        kind, index = data
+        if kind == "archive":
+            self._on_history_restore(index)
+        else:
+            self._switch_conversation(index)
+        self._close_sidebar()
 
-            tab_btn = QPushButton()
-            tab_btn.setFixedHeight(28)
-            tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            display = title[:12] + "..." if len(title) > 12 else title
-            tab_btn.setToolTip(title)
-            tab_btn._conv_idx = idx  # store index for click handler
-
-            if is_active:
-                tab_btn.setText(display)
-                tab_btn.setStyleSheet(
-                    f"QPushButton {{ "
-                    f"  background:{ACCENT}; color:{WHITE}; "
-                    f"  border:none; border-radius:6px; "
-                    f"  padding:0 10px; font-size:11px; font-weight:600; "
-                    f"  font-family:{FONT_FAMILY}; "
-                    f"  min-width:0; "
-                    f"}} "
-                    f"QPushButton:hover {{ background:{ACCENT_BRIGHT}; }}"
-                )
-            else:
-                tab_btn.setText(display)
-                tab_btn.setStyleSheet(
-                    f"QPushButton {{ "
-                    f"  background:transparent; color:{TEXT_MUTED}; "
-                    f"  border:none; border-radius:6px; "
-                    f"  padding:0 10px; font-size:11px; "
-                    f"  font-family:{FONT_FAMILY}; "
-                    f"  min-width:0; "
-                    f"}} "
-                    f"QPushButton:hover {{ background:{ACCENT_SOFT}; color:{TEXT_SECONDARY}; }}"
-                )
-
-            tab_btn.clicked.connect(lambda checked, i=idx: self._switch_conversation(i))
-            self._tab_bar_layout.addWidget(tab_btn)
-
-            # Close button (only if more than 1 conversation)
-            if len(self._conversations) > 1:
-                close_btn = QPushButton("x")
-                close_btn.setFixedSize(18, 18)
-                close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                close_btn.setToolTip("关闭对话")
-                close_btn._close_idx = idx
-                close_btn.setStyleSheet(
-                    f"QPushButton {{ "
-                    f"  background:transparent; color:{TEXT_MUTED}; "
-                    f"  border:none; border-radius:4px; "
-                    f"  font-size:10px; font-weight:600; "
-                    f"  font-family:{FONT_FAMILY}; "
-                    f"}} "
-                    f"QPushButton:hover {{ background:{RED_SOFT}; color:{RED}; }}"
-                )
-                close_btn.clicked.connect(
-                    lambda checked, i=idx: self._close_conversation(i)
-                )
-                self._tab_bar_layout.addWidget(close_btn)
-
-        # "+" button to add new conversation
-        add_btn = QPushButton("+")
-        add_btn.setFixedSize(28, 28)
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.setToolTip("新建对话")
-        add_btn.setStyleSheet(
-            f"QPushButton {{ "
-            f"  background:transparent; color:{TEXT_MUTED}; "
-            f"  border:1px dashed {BORDER}; border-radius:6px; "
-            f"  font-size:14px; font-weight:600; "
-            f"  font-family:{FONT_FAMILY}; "
-            f"}} "
-            f"QPushButton:hover {{ "
-            f"  background:{ACCENT_SOFT}; color:{ACCENT}; "
-            f"  border-color:{ACCENT}; "
-            f"}}"
-        )
-        add_btn.clicked.connect(self._add_conversation)
-        self._tab_bar_layout.addWidget(add_btn)
-
-        self._tab_bar_layout.addStretch(1)
+    def _session_menu(self, position):
+        from PySide6.QtWidgets import QInputDialog, QMessageBox
+        item = self._session_list.itemAt(position)
+        if item is None or not item.data(Qt.ItemDataRole.UserRole):
+            return
+        kind, index = item.data(Qt.ItemDataRole.UserRole)
+        title = item.text()
+        menu = QMenu(self)
+        rename = menu.addAction("重命名")
+        remove = menu.addAction("归档" if kind == "active" else "删除")
+        choice = menu.exec(self._session_list.mapToGlobal(position))
+        if choice == rename:
+            value, accepted = QInputDialog.getText(self, "重命名会话", "名称", text=title)
+            if accepted and value.strip():
+                callback = self._rename_conversation if kind == "active" else self._on_history_rename
+                callback(index, value.strip())
+        elif choice == remove:
+            if kind == "active":
+                self._close_conversation(index)
+            elif QMessageBox.question(self, "删除历史", "删除这条已归档会话？") == QMessageBox.StandardButton.Yes:
+                self._on_history_delete(index)
 
     def _switch_conversation(self, idx: int) -> None:
+        self.bridge.temporary_context = ""
         """Save current conversation, then load the conversation at *idx*."""
         if idx == self._active_idx:
             return
         if idx < 0 or idx >= len(self._conversations):
             return
 
-        # Save current messages to disk
+        self._stop_generation()
         self._save_conversation()
 
         # Update active index
@@ -662,6 +560,7 @@ class ChatWindow(ChatBaseWindow):
     def _add_conversation(self) -> None:
         """Create a new empty conversation and switch to it."""
         import uuid
+        self._stop_generation()
         self._save_conversation()
 
         new_conv = {
@@ -682,10 +581,12 @@ class ChatWindow(ChatBaseWindow):
     def _close_conversation(self, idx: int) -> None:
         """Archive conversation at *idx* and remove from tabs. Switch to adjacent if active."""
         if len(self._conversations) <= 1:
-            return  # always keep at least one
+            self._add_conversation()
         if idx < 0 or idx >= len(self._conversations):
             return
 
+        self._stop_generation()
+        self._save_conversation()
         # Archive non-empty conversations before removing
         conv = self._conversations.pop(idx)
         if conv.get("messages"):
@@ -766,10 +667,12 @@ class ChatWindow(ChatBaseWindow):
     def _clear_message_display(self) -> None:
         """Remove all widgets from the message layout (but keep the trailing stretch)."""
         self._streaming = False
-        self._send_btn.setEnabled(True)
+        self._set_generating(False)
         self._live_widget = None
         self._live_text = ""
         self._typing_widget = None
+        self._error_card = None
+        self._welcome_card = None
 
         while self._messages_layout.count() > 1:
             item = self._messages_layout.takeAt(0)
@@ -790,6 +693,8 @@ class ChatWindow(ChatBaseWindow):
     def _render_messages_from_list(self, messages: list) -> None:
         """Clear the display and render all *messages* as _MessageBubble widgets."""
         self._clear_message_display()
+        if not messages:
+            self._sys_welcome()
         for msg in messages:
             role = _normalize_role(msg.get("role", "user"))
             content = msg.get("content", "")
@@ -826,19 +731,97 @@ class ChatWindow(ChatBaseWindow):
     def _now(self) -> str:
         return datetime.now().strftime("%H:%M")
 
+    def set_integration_warning(self, message):
+        self._integration_notice.setText(message)
+        self._integration_notice.setVisible(bool(message))
+
+    def _set_generating(self, active):
+        self._streaming = active
+        self._send_btn.set_busy(active)
+        self._send_btn.setToolTip("停止生成，保留已收到的内容" if active else "发送消息（Enter）")
+        self._update_send_button()
+
+    def _update_send_button(self):
+        self._send_btn.setEnabled(self._streaming or bool(self._input.toPlainText().strip()))
+
+    def _send_or_stop(self):
+        if self._streaming:
+            self._stop_generation()
+        else:
+            self._send()
+
+    def _remove_typing(self):
+        if self._typing_widget is not None:
+            self._messages_layout.removeWidget(self._typing_widget)
+            self._typing_widget.setParent(None)
+            self._typing_widget.deleteLater()
+            self._typing_widget = None
+
+    def _dismiss_error(self):
+        if self._error_card is not None:
+            self._messages_layout.removeWidget(self._error_card)
+            self._error_card.setParent(None)
+            self._error_card.deleteLater()
+            self._error_card = None
+
+    def _stop_generation(self):
+        if not self._streaming:
+            return
+        self._set_generating(False)
+        self.bridge.cancel()
+        self._render_timer.stop()
+        self._remove_typing()
+        if self._live_text and self._live_widget is not None:
+            self._live_widget.set_text(self._live_text, streaming=False)
+            self.messages.append({"role": "ai", "content": self._live_text,
+                                  "time": datetime.now().isoformat()})
+        self._live_widget = None
+        self._live_text = ""
+        self.bridge.state_changed.emit("idle", "已停止")
+        self._save_conversation()
+        self._update_tab_bar()
+
+    def _retry_response(self):
+        if self._streaming or not self.messages or self.messages[-1].get("role") != "user":
+            return
+        self._dismiss_error()
+        if self._live_widget is not None:
+            self._messages_layout.removeWidget(self._live_widget)
+            self._live_widget.setParent(None)
+            self._live_widget.deleteLater()
+        self._live_widget = None
+        self._live_text = ""
+        self._set_generating(True)
+        self._typing_widget = _TypingBubble()
+        self._append_widget(self._typing_widget)
+        self.bridge.send([dict(message) for message in self.messages])
+
     def _send(self):
         text = self._input.toPlainText().strip()
         if not text or self._streaming:
             return
+        if self._error_card is not None and self._live_widget is not None:
+            self._messages_layout.removeWidget(self._live_widget)
+            self._live_widget.setParent(None)
+            self._live_widget.deleteLater()
+            self._live_widget = None
+        self._dismiss_error()
         self._input.clear()
+        welcome = getattr(self, "_welcome_card", None)
+        if welcome is not None:
+            self._messages_layout.removeWidget(welcome)
+            welcome.deleteLater()
+            self._welcome_card = None
         # 显示用户消息气泡
         self._append_widget(_MessageBubble("user", text, self._now(), renderer=self._md))
         self.messages.append({"role": "user", "content": text, "time": datetime.now().isoformat()})
+        self._live_text = ""
+        self._live_widget = None
         self._streaming = True
-        self._send_btn.setEnabled(False)
+        self._set_generating(True)
         self._typing_widget = _TypingBubble()
         self._append_widget(self._typing_widget)
-        self.bridge.send(self.messages)
+        self.bridge.send([dict(message) for message in self.messages])
 
     def _send_text(self, text: str) -> None:
         """P3-5: 外部（如桌宠嗅图标）直接发文本，跳过 input 清空逻辑。"""
@@ -851,6 +834,8 @@ class ChatWindow(ChatBaseWindow):
             self._input.setFixedHeight(self._input.LINE_H + 8)
 
     def _on_chunk(self, chunk: str, _full: str):
+        if not self._streaming:
+            return
         if self._typing_widget is not None:
             self._messages_layout.removeWidget(self._typing_widget)
             self._typing_widget.setParent(None)
@@ -864,7 +849,8 @@ class ChatWindow(ChatBaseWindow):
         else:
             self._live_text += chunk
             # Throttle: schedule a delayed render instead of rendering every chunk
-            self._render_timer.start()  # restarts the 80ms countdown
+            if not self._render_timer.isActive():
+                self._render_timer.start()
 
     def _flush_stream_render(self):
         """Render accumulated streaming text (called by throttle timer)."""
@@ -872,62 +858,109 @@ class ChatWindow(ChatBaseWindow):
             self._live_widget.set_text(self._live_text, streaming=True)
 
     def _on_done(self, full: str):
-        self.messages.append({"role": "ai", "content": full, "time": datetime.now().isoformat()})
-        self._streaming = False
-        self._send_btn.setEnabled(True)
-        # Cancel throttle timer and do final full render
+        if not self._streaming:
+            return
+        if not full.strip():
+            self._on_err("服务没有返回内容，请重试。")
+            return
         self._render_timer.stop()
+        self._remove_typing()
         if self._live_widget is not None:
             self._live_widget.set_text(full, streaming=False)
-            self._live_widget = None
+        else:
+            self._append_widget(_MessageBubble("ai", full, self._now(), renderer=self._md))
+        self.messages.append({"role": "ai", "content": full, "time": datetime.now().isoformat()})
+        self._live_widget = None
         self._live_text = ""
-        # Auto-save after each response
+        self._set_generating(False)
+        self._on_state("idle")
         self._save_conversation()
-        # Update tab title if this is the first user message response
         self._update_tab_bar()
 
     def _on_err(self, err: str):
-        self._streaming = False
-        self._send_btn.setEnabled(True)
+        if not self._streaming:
+            return
         self._render_timer.stop()
-        if self._typing_widget is not None:
-            self._messages_layout.removeWidget(self._typing_widget)
-            self._typing_widget.setParent(None)
-            self._typing_widget.deleteLater()
-            self._typing_widget = None
-        err_bubble = _MessageBubble("ai", f"❌ {err}", self._now(),
-                                    renderer=self._md)
-        self._append_widget(err_bubble)
+        self._remove_typing()
+        self._set_generating(False)
+        self._dismiss_error()
+        card = QFrame()
+        card.setObjectName("responseError")
+        card.setStyleSheet(f"QFrame#responseError {{background:{RED_SOFT};border:none;border-radius:10px;}}")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 10)
+        title = QLabel("这次没有完成")
+        title.setStyleSheet(f"color:{RED};font-size:12px;font-weight:600;background:transparent;")
+        layout.addWidget(title)
+        detail = QLabel(str(err)[:500])
+        detail.setTextFormat(Qt.TextFormat.PlainText)
+        detail.setWordWrap(True)
+        detail.setStyleSheet(f"color:{TEXT_SECONDARY};font-size:11px;background:transparent;")
+        layout.addWidget(detail)
+        retry = QPushButton("重试")
+        retry.setFixedSize(54, 28)
+        retry.setStyleSheet(f"QPushButton {{background:{BG_CARD};border:none;padding:0;color:{TEXT_PRIMARY};border-radius:6px;}}")
+        retry.clicked.connect(self._retry_response)
+        layout.addWidget(retry, 0, Qt.AlignmentFlag.AlignLeft)
+        self._error_card = card
+        self._append_widget(card)
+        self._on_state("error")
+        self._save_conversation()
 
-    def _on_state(self, state: str, _preview: str):
-        cmap = {"idle": GREEN, "thinking": GOLD, "error": RED}
-        lmap = {"idle": "Ready", "thinking": "Thinking…", "error": "Error"}
-        self._status.setText(lmap.get(state, "Ready"))
+    def _on_state(self, state: str, _preview: str = ""):
+        self._avatar_thinking = state in ("thinking", "understanding", "transcribing", "executing")
+        self._refresh_pet_avatar()
+        if state == "thinking" and self._typing_widget is not None:
+            self._typing_widget.set_progress(_preview)
+        labels = {"thinking": "思考中…", "error": "需要留意", "listening": "正在听",
+                  "transcribing": "正在转写", "understanding": "正在整理", "executing": "正在处理",
+                  "asking_confirmation": "等待确认", "reminding": "到提醒时间了", "success": "已完成"}
+        self._status.setText(labels.get(state, ""))
+        self._status.setVisible(state in labels)
         self._status.setStyleSheet(
-            f"color:{cmap.get(state, GREEN)};font-size:10px;"
+            f"color:{RED if state == 'error' else TEXT_MUTED};font-size:11px;"
             f"background:transparent;border:none;"
         )
-        self._status_dot.setStyleSheet(
-            f"background:{cmap.get(state, GREEN)};border-radius:3px;"
-        )
+
+    def _refresh_pet_avatar(self):
+        avatar = _load_cat_avatar(28, thinking=getattr(self, "_avatar_thinking", False),
+                                  pet_id=self.bridge.user_config.get("pet_id", "orange"),
+                                  ratio=self.devicePixelRatioF())
+        if avatar is not None:
+            self._pet_avatar.setPixmap(avatar)
+
+    def event(self, event):
+        result = super().event(event)
+        if event.type() == QEvent.Type.DevicePixelRatioChange and hasattr(self, "_pet_avatar"):
+            self._refresh_pet_avatar()
+        return result
 
     # ─────────────────────────────────────────────────────────────────
     # History panel handlers
     # ─────────────────────────────────────────────────────────────────
 
     def _toggle_history(self):
-        """Toggle the history panel open/closed."""
-        if self._history_panel.isVisible():
-            self._history_panel.hide()
+        if self._session_panel.isVisible():
+            self._close_sidebar()
         else:
-            archive = _cfg.load_archive()
-            self._history_panel.update_data(archive)
-            self._history_panel.show()
+            self._update_tab_bar()
+            width = min(self.width() + 190, self.screen().availableGeometry().width())
+            self._sidebar_width = width - self.width()
+            self.resize(width, self.height())
+            self._session_panel.show()
+            self._sidebar_button.setChecked(True)
+
+    def _close_sidebar(self):
+        self._session_panel.hide()
+        self._sidebar_button.setChecked(False)
+        if self._sidebar_width:
+            self.resize(max(420, self.width() - self._sidebar_width), self.height())
+            self._sidebar_width = 0
 
     def _on_history_switch(self, idx: int):
         """Switch to a conversation from the history panel."""
         self._switch_conversation(idx)
-        self._history_panel.hide()
+        self._close_sidebar()
 
     def _on_history_rename(self, idx: int, title: str):
         """Rename a conversation in the archive."""
@@ -935,7 +968,7 @@ class ChatWindow(ChatBaseWindow):
         if 0 <= idx < len(archive):
             archive[idx]["title"] = title
             _cfg.save_archive(archive)
-            self._history_panel.update_data(archive)
+            self._update_tab_bar()
 
     def _on_history_delete(self, idx: int):
         """Permanently delete a conversation from the archive."""
@@ -943,10 +976,12 @@ class ChatWindow(ChatBaseWindow):
         if 0 <= idx < len(archive):
             archive.pop(idx)
             _cfg.save_archive(archive)
-            self._history_panel.update_data(archive)
+            self._update_tab_bar()
 
     def _on_history_restore(self, idx: int):
         """Restore an archived conversation back to the tab bar."""
+        self._stop_generation()
+        self._save_conversation()
         archive = _cfg.load_archive()
         if 0 <= idx < len(archive):
             conv = archive.pop(idx)
@@ -958,22 +993,25 @@ class ChatWindow(ChatBaseWindow):
             self._render_messages_from_list(self.messages)
             self._update_tab_bar()
             self._save_all_conversations()
-            self._history_panel.update_data(_cfg.load_archive())
-            self._history_panel.hide()
+            self._update_tab_bar()
+            self._close_sidebar()
 
     def _on_history_closed(self):
         """History panel closed — no-op, just for completeness."""
         pass
 
     def append_command_result(self, cmd: str, ok: bool, out: str):
-        self._append_widget(_CommandResult(cmd, ok))
+        self._append_widget(_CommandResult(cmd, ok, out))
 
     def _clear(self):
+        self._stop_generation()
+        self._dismiss_error()
         self.messages.clear()
         self._streaming = False
-        self._send_btn.setEnabled(True)
+        self._set_generating(False)
         self._live_widget = None
         self._live_text = ""
+        self._welcome_card = None
         while self._messages_layout.count() > 1:
             item = self._messages_layout.takeAt(0)
             w = item.widget() if item else None
@@ -989,17 +1027,22 @@ class ChatWindow(ChatBaseWindow):
                         if sw is not None:
                             sw.setParent(None)
                             sw.deleteLater()
-        self._sys("Chat cleared.")
+        self._sys_welcome()
+        self._save_conversation()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        usable = int(self.width() * 0.88)
-        bubble_max = max(220, usable - 18 - 18 - 24 - 10)
-        for i in range(self._messages_layout.count() - 1):
-            item = self._messages_layout.itemAt(i)
-            w = item.widget() if item else None
-            if isinstance(w, _MessageBubble):
-                w._bubble.setMaximumWidth(bubble_max)
+        self._apply_rounded_mask()
+        if hasattr(self, "_resize_grip"):
+            self._resize_grip.move(self.width() - 30, self.height() - 30)
+        if not hasattr(self, "_messages_layout"):
+            return
+        width = max(180, self._scroll.viewport().width() - 48)
+        for index in range(self._messages_layout.count() - 1):
+            widget = self._messages_layout.itemAt(index).widget()
+            if isinstance(widget, _MessageBubble):
+                widget.setMaximumWidth(width)
+                widget._bubble.setMaximumWidth(width if widget._role == "ai" else int(width * 0.88))
 
     def toggle_visibility(self):
         if self.isVisible():
@@ -1025,6 +1068,10 @@ class ChatWindow(ChatBaseWindow):
         """Remove the last AI message and resend the last user message."""
         if self._streaming or not self.messages:
             return
+        if self._error_card is not None:
+            self._retry_response()
+            return
+        self._dismiss_error()
         # Pop assistant messages from history and UI
         while self.messages and _normalize_role(self.messages[-1].get("role", "")) == "ai":
             self.messages.pop()
@@ -1036,36 +1083,33 @@ class ChatWindow(ChatBaseWindow):
                     w.setParent(None)
                     w.deleteLater()
                     break
+        self._live_widget = None
+        self._live_text = ""
         # Re-send using the existing last user message without re-appending
         if self.messages and self.messages[-1]["role"] == "user":
             last_user_text = self.messages[-1]["content"]
             self._streaming = True
-            self._send_btn.setEnabled(False)
+            self._set_generating(True)
             self._typing_widget = _TypingBubble()
             self._append_widget(self._typing_widget)
-            self.bridge.send(self.messages)
+            self.bridge.send([dict(message) for message in self.messages])
 
     def closeEvent(self, event):
         """Save conversation on window close."""
         self._save_conversation()
+        main_app = getattr(self, "_main_app", None)
+        if main_app:
+            event.ignore()
+            self.hide()
+            if main_app.tray:
+                main_app.tray.set_chat_visible(False)
+            return
         super().closeEvent(event)
 
-    def paintEvent(self, _e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        w, h = float(self.width()), float(self.height())
-        r = float(RADIUS_LG)
-        # Clear to transparent FIRST — overrides QSS solid background
-        p.setPen(Qt.PenStyle.NoPen)
-        p.fillRect(QRectF(0, 0, w, h), Qt.GlobalColor.transparent)
-        # Draw rounded rect — corners remain transparent (anti-aliased)
-        p.setBrush(QColor(BG_DEEP))
-        p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
-        p.end()
+    def paintEvent(self, event):
+        from ui.window_surface import paint_window_surface
+        paint_window_surface(self)
 
-    # ── File drag-and-drop ─────────────────────────────────────────
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -1084,6 +1128,10 @@ class ChatWindow(ChatBaseWindow):
 
     def _on_dropped_files(self, paths: list):
         """P2-2: 统一处理拖入 / 桌宠吞下的文件列表（已过滤敏感词）。"""
+        main_app = getattr(self, "_main_app", None)
+        if main_app and main_app.agent:
+            main_app.agent.files_dropped(paths)
+            return
         from ui.drag_drop_util import filter_sensitive_filepaths
         kept, filtered = filter_sensitive_filepaths(paths)
         for fp in filtered:
@@ -1103,5 +1151,3 @@ class ChatWindow(ChatBaseWindow):
             cur = self._input.toPlainText().strip()
             self._input.setPlainText((cur + "\n" + new) if cur else new)
         self._input.setFocus()
-
-

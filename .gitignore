@@ -34,6 +34,7 @@ templates/
 # Build output
 build/
 dist/
+releases/
 # Keep the versioned PyInstaller entrypoint; ignore ad-hoc generated specs.
 *.generated.spec
 
@@ -51,4 +52,5 @@ find_window.ps1
 minimize_clutter.ps1
 restore_windows.ps1
 *.ps1
+!/winisland/packaging/**/*.ps1
 !启动 BuddyDesk.vbs

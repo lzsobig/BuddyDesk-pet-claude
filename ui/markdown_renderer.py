@@ -248,22 +248,18 @@ class MarkdownRenderer:
 
     def _render_code_block(self, lang: str, code: str) -> str:
         """Render a fenced code block."""
-        escaped = self._escape_html(code)
+        wrapped = self._escape_html('\n'.join('\u200b'.join(line[index:index + 36] for index in range(0, len(line), 36))
+                            for line in code.split('\n')))
         return (
-            f'<div style="margin:6px 0;background:{BG_SUBTLE};'
-            f'border:1px solid {BORDER};border-radius:8px;overflow:hidden;">'
-            f'<div style="padding:4px 12px;background:{BG_CARD};'
-            f'color:{TEXT_MUTED};font-size:10px;font-family:{FONT_MONO};border-bottom:1px solid {BORDER};">'
-            f'{self._escape_html(lang) or "code"}</div>'
-            f'<pre style="margin:0;padding:8px 12px;color:{TEXT_PRIMARY};'
-            f'font-family:{FONT_MONO};font-size:12px;'
-            f'white-space:pre-wrap;word-break:break-all;background:transparent;">{escaped}</pre>'
-            f'</div>'
+            f'<table width="100%" cellspacing="0" cellpadding="10" bgcolor="{BG_SUBTLE}">'
+            f'<tr><td><span style="color:{TEXT_MUTED};font-size:10px;">{self._escape_html(lang) or "code"}</span>'
+            f'<p style="margin-top:8px;margin-bottom:2px;color:{TEXT_PRIMARY};font-family:{FONT_MONO};font-size:12px;">'
+            f'{wrapped.replace(chr(10), "<br>").replace(" ", "&#160;")}</p></td></tr></table>'
         )
 
     def _render_paragraph(self, text: str) -> str:
         """Render a paragraph with inline formatting."""
-        return f'<div style="margin:3px 0;line-height:1.6;">{self._inline(text)}</div>'
+        return f'<p style="margin-top:6px;margin-bottom:12px;line-height:145%;">{self._inline(text)}</p>'
 
     def _inline(self, text: str) -> str:
         """Apply inline formatting (no markdown in system messages).

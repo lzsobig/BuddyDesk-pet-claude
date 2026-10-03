@@ -1,0 +1,597 @@
+use std::time::{Duration, Instant};
+
+use winisland_platform::{
+    AppHandler, BackdropShape, HostBackdropParams, InputState, MouseButton, PlatformEvent, Theme,
+    TouchPhase, WindowId, WindowPosition,
+};
+
+use crate::platform::window;
+use crate::ui::island::draw_island;
+use crate::utils::blur::calculate_blur_sigmas;
+use crate::utils::mouse::get_global_cursor_pos;
+
+use super::App;
+use super::input::InputSource;
+
+impl App {
+    pub(super) fn on_window_event(&mut self, id: WindowId, event: PlatformEvent) {
+        if let Some(win) = self.window
+            && win.id() == id
+        {
+            match event {
+                PlatformEvent::CloseRequested { .. } => {
+                    log::info!("Main window close requested, exiting application");
+                    self.close_settings();
+                    window().exit();
+                }
+                PlatformEvent::ThemeChanged { theme, .. } => {
+                    let is_light = theme == Theme::Light;
+                    self.is_light_theme = is_light;
+                    win.request_redraw();
+                    log::info!("Window theme changed to {theme:?}");
+                    if self.tray_installed {
+                        let _ = crate::platform::shell().tray_update(
+                            crate::platform::tray_theme(is_light),
+                            crate::platform::tray_labels(self.visible),
+                        );
+                    }
+                }
+                PlatformEvent::Resized { .. } if win.is_maximized() => {
+                    win.set_maximized(false);
+                }
+                PlatformEvent::Resized { size, .. } if size.width > 0 && size.height > 0 => {
+                    let expected = self.required_window_size();
+                    if size != expected {
+                        let _ = win.request_inner_size(expected);
+                        return;
+                    }
+                    self.geom.os_w = size.width;
+                    self.geom.os_h = size.height;
+                    if let Some(renderer) = self.renderer.as_mut() {
+                        let target = renderer.main_target();
+                        if let Err(error) = renderer.resize(target, size.width, size.height) {
+                            log::error!("Renderer resize failed: {error}");
+                        }
+                    }
+                    win.request_redraw();
+                }
+                PlatformEvent::ScaleFactorChanged { .. } => {
+                    let expected = self.required_window_size();
+                    let _ = win.request_inner_size(expected);
+                    if let Some(monitor) = Self::get_target_monitor(&win, self.config.monitor_index)
+                    {
+                        let (x, y) =
+                            self.compute_window_position(monitor.position(), monitor.size());
+                        self.geom.configured_x = x;
+                        self.geom.configured_y = y;
+                        self.geom.win_x = x;
+                        self.geom.win_y = y;
+                        win.set_outer_position(WindowPosition::new(x, y));
+                    }
+                }
+                PlatformEvent::Moved { position, .. } => {
+                    self.geom.win_x = position.x;
+                    self.geom.win_y = position.y;
+                    if !self.is_dragging
+                        && !self.is_right_dragging
+                        && self.hide.origin.is_none()
+                        && self.geom.position_restore_after.is_none()
+                        && (position.x != self.geom.configured_x
+                            || position.y != self.geom.configured_y)
+                    {
+                        self.geom.win_x = self.geom.configured_x;
+                        self.geom.win_y = self.geom.configured_y;
+                        win.set_outer_position(WindowPosition::new(
+                            self.geom.configured_x,
+                            self.geom.configured_y,
+                        ));
+                    }
+                }
+                PlatformEvent::DroppedFile { path, .. }
+                    if path
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("zip")) =>
+                {
+                    log::info!("File dropped: {}", path.display());
+                    self.install_zip_drop(&path);
+                }
+                PlatformEvent::MouseWheel { delta, .. } => {
+                    let (px, py) = get_global_cursor_pos();
+                    if self.handle_mouse_wheel(delta, px, py) {
+                        win.request_redraw();
+                    }
+                }
+                PlatformEvent::MouseInput { state, button, .. } => {
+                    if self.touch_id.is_some()
+                        || self
+                            .last_touch_at
+                            .is_some_and(|time| time.elapsed() < Duration::from_millis(250))
+                    {
+                        return;
+                    }
+                    let (px, py) = get_global_cursor_pos();
+                    if button == MouseButton::Left {
+                        self.handle_input(state, px, py, InputSource::Mouse);
+                    } else if button == MouseButton::Right {
+                        self.handle_right_input(state, px, py);
+                    }
+                }
+                PlatformEvent::Touch {
+                    touch_id,
+                    phase,
+                    position,
+                    ..
+                } => {
+                    self.last_touch_at = Some(Instant::now());
+                    let (px, py) = (
+                        (position.x + self.geom.win_x as f64) as i32,
+                        (position.y + self.geom.win_y as f64) as i32,
+                    );
+                    match phase {
+                        TouchPhase::Started if self.touch_id.is_none() => {
+                            self.touch_pos = position;
+                            self.touch_id = Some(touch_id);
+                            win.request_redraw();
+                            self.handle_input(InputState::Pressed, px, py, InputSource::Touch);
+                        }
+                        TouchPhase::Moved if self.touch_id == Some(touch_id) => {
+                            self.touch_pos = position;
+                            win.request_redraw();
+                        }
+                        TouchPhase::Ended if self.touch_id == Some(touch_id) => {
+                            self.touch_pos = position;
+                            win.request_redraw();
+                            self.handle_input(InputState::Released, px, py, InputSource::Touch);
+                            self.touch_id = None;
+                        }
+                        TouchPhase::Cancelled if self.touch_id == Some(touch_id) => {
+                            self.touch_id = None;
+                            self.expanded_press_started_inside = false;
+                            self.expanded_header_press = None;
+                            self.is_dragging = false;
+                            self.drag_axis = None;
+                            self.dismissing_notification = false;
+                            self.seek.active = false;
+                            self.compact_overlay.finish_volume_drag();
+                            self.compact_overlay.finish_brightness_drag();
+                            win.request_redraw();
+                        }
+                        _ => {}
+                    }
+                }
+                PlatformEvent::RedrawRequested { .. } => {
+                    let island_layout = self.compute_island_layout();
+                    let is_hidden = self.is_hidden();
+                    if let Some(mut renderer) = self.renderer.take() {
+                        let dt =
+                            (self.last_render_time.elapsed().as_secs_f32() * 60.0).clamp(0.1, 6.0);
+                        self.last_render_time = Instant::now();
+                        let sigmas = if self.config.motion_blur {
+                            calculate_blur_sigmas(
+                                self.springs.w.velocity,
+                                self.springs.h.velocity,
+                                self.springs.view.velocity,
+                                self.springs.w.value,
+                            )
+                        } else {
+                            (0.0, 0.0)
+                        };
+                        let compact_target_h = self.compact_content_height();
+                        let compact_content_h = compact_target_h.min(self.springs.h.value).max(0.0);
+                        let total_h = ((self.config.expanded_height
+                            + crate::ui::expanded::today_section::height(
+                                self.agent.snapshot(),
+                                self.agent.connected(),
+                            ))
+                            * self.config.expanded_scale
+                            - compact_target_h)
+                            .abs()
+                            .max(1.0);
+                        let dist_h = (self.springs.h.value - compact_target_h).abs();
+                        let progress = (dist_h / total_h).clamp(0.0, 1.0);
+                        if let Some(event) = self.next_v2_media_event() {
+                            match event {
+                                Some(source) => {
+                                    let (cover, hash) = if !source.cover.is_empty() {
+                                        use std::collections::hash_map::DefaultHasher;
+                                        use std::hash::{Hash, Hasher};
+                                        let mut hasher = DefaultHasher::new();
+                                        source.cover.hash(&mut hasher);
+                                        (Some(std::sync::Arc::from(source.cover)), hasher.finish())
+                                    } else {
+                                        (None, 0)
+                                    };
+                                    self.plugin_media_source = Some(super::PluginMediaSource {
+                                        resource_id: source.resource_id,
+                                        available_controls: source.available_controls,
+                                        info: crate::core::smtc::MediaInfo {
+                                            title: source.title,
+                                            artist: source.artist,
+                                            album: source.album,
+                                            duration_ms: source.duration_ms,
+                                            duration_secs: source.duration_ms / 1000,
+                                            position_ms: source.position_ms,
+                                            is_playing: source.is_playing,
+                                            last_update: Instant::now(),
+                                            thumbnail: cover,
+                                            thumbnail_hash: hash,
+                                            ..Default::default()
+                                        },
+                                    });
+                                }
+                                None => {
+                                    self.plugin_media_source = None;
+                                }
+                            }
+                        }
+                        if let Some(source) = self.plugin_media_source.as_mut()
+                            && source.info.is_playing
+                        {
+                            let elapsed = source.info.last_update.elapsed().as_millis() as u64;
+                            source.info.position_ms =
+                                source.info.position_ms.saturating_add(elapsed);
+                            source.info.last_update = Instant::now();
+                        }
+                        let spectrum = self.audio.get_spectrum();
+                        let default_media_info = crate::core::smtc::MediaInfo::default();
+                        let plugin_media_active = self.plugin_media_source.is_some();
+                        let available_controls =
+                            if let Some(source) = self.plugin_media_source.as_mut() {
+                                source.info.spectrum = spectrum;
+                                source.available_controls
+                            } else if self.config.smtc_enabled {
+                                self.smtc_media_info.spectrum = spectrum;
+                                winisland_plugin_api::types::v2::context::MEDIA_CONTROL_TOGGLE_PLAY
+                                | winisland_plugin_api::types::v2::context::MEDIA_CONTROL_PREVIOUS
+                                | winisland_plugin_api::types::v2::context::MEDIA_CONTROL_NEXT
+                                | winisland_plugin_api::types::v2::context::MEDIA_CONTROL_SEEK
+                            } else {
+                                0
+                            };
+                        let v2_widgets_changed = self.refresh_v2_widgets();
+                        self.prepare_v2_frames();
+                        self.refresh_v2_contexts();
+                        let media_info = if let Some(source) = self.plugin_media_source.as_ref() {
+                            &source.info
+                        } else if self.config.smtc_enabled {
+                            &self.smtc_media_info
+                        } else {
+                            &default_media_info
+                        };
+                        let seeking_media_info = if self.seek.active && self.seek.duration_ms > 0 {
+                            let mut preview = media_info.clone();
+                            preview.position_ms = self.seek.preview_ms;
+                            preview.last_update = Instant::now();
+                            Some(preview)
+                        } else {
+                            None
+                        };
+                        let media_info = seeking_media_info.as_ref().unwrap_or(media_info);
+                        let expanded_pages = self.expanded_pages();
+                        self.update_v2_album_art(
+                            media_info.thumbnail.as_deref(),
+                            media_info.thumbnail_hash,
+                        );
+                        let music_active = !media_info.title.is_empty()
+                            && (plugin_media_active || self.config.smtc_enabled);
+                        self.update_v2_host_state(
+                            &media_info.title,
+                            &media_info.artist,
+                            media_info.is_playing,
+                        );
+                        self.audio.set_gate_override(music_active && !is_hidden);
+                        self.ctx_mgr.set_smtc_active(music_active);
+                        let _ = self.ctx_mgr.tick();
+                        if v2_widgets_changed {
+                            let widgets = self.widget_mgr.configurable_widgets();
+                            let mut layout_config = crate::core::persistence::load_config();
+                            if winisland_core::config::normalize_active_plugin_widget_layout(
+                                &layout_config.widget_layout,
+                                &mut layout_config.plugin_widget_layout,
+                                &widgets,
+                            ) {
+                                crate::core::persistence::save_config(&layout_config);
+                            }
+                            self.config.widget_layout = layout_config.widget_layout;
+                            self.config.plugin_widget_layout = layout_config.plugin_widget_layout;
+                            if let Some(settings) = self.settings.as_mut() {
+                                settings.set_plugin_widgets(widgets);
+                            }
+                        }
+                        let compact_components_hidden = self.components_hidden && !self.expanded;
+                        let mini_content = if compact_components_hidden {
+                            None
+                        } else {
+                            self.ctx_mgr.current_mini()
+                        };
+                        let attention_alpha = if self.fullscreen_hide_active()
+                            && self.hide.fullscreen
+                            && !self.hide.overlay_reveal
+                        {
+                            self.attention_pulse_started.map_or(0.0, |started| {
+                                let elapsed = started.elapsed().as_secs_f32();
+                                if elapsed >= 1.6 {
+                                    0.0
+                                } else {
+                                    (elapsed / 0.2).min(1.0) * ((1.6 - elapsed) / 0.5).min(1.0)
+                                }
+                            })
+                        } else {
+                            0.0
+                        };
+                        let (current_secondary_lyric, old_secondary_lyric) =
+                            if self.config.show_secondary_lyrics {
+                                (
+                                    self.lyrics.current_secondary_text.as_str(),
+                                    self.lyrics.old_secondary_text.as_str(),
+                                )
+                            } else {
+                                ("", "")
+                            };
+
+                        let pager_alpha = crate::ui::island::expanded_content_alpha(
+                            progress,
+                            self.springs.hide.value * island_layout.content_hide_ratio,
+                            self.compact_overlay.is_visible(),
+                        );
+                        let pager_backdrop = if pager_alpha > 0.01 {
+                            let pager = crate::ui::expanded::pager::visible_layout(
+                                winisland_render::Rect::from_xywh(
+                                    island_layout.current_island_x as f32,
+                                    island_layout.current_island_y as f32,
+                                    self.springs.w.value,
+                                    self.springs.h.value,
+                                ),
+                                expanded_pages.len(),
+                                self.config.expanded_scale,
+                                island_layout.dock_bottom,
+                                pager_alpha,
+                                self.bar_hover.value,
+                                self.close_hover.value,
+                            );
+                            let shape = |rect: winisland_render::Rect| BackdropShape {
+                                screen_x: self.geom.win_x as f32 + rect.left,
+                                screen_y: self.geom.win_y as f32 + rect.top,
+                                width: rect.width(),
+                                height: rect.height(),
+                                radius: rect.height() / 2.0,
+                                opacity: pager_alpha,
+                            };
+                            [pager.bar.map(shape), Some(shape(pager.close))]
+                        } else {
+                            [None, None]
+                        };
+                        let host_backdrop = super::system::update_host_backdrop(
+                            &mut self.host_backdrop,
+                            win.id(),
+                            HostBackdropParams {
+                                enabled: matches!(
+                                    self.config.island_style.as_str(),
+                                    "glass" | "dynamic"
+                                ),
+                                screen_x: self.geom.win_x as f32
+                                    + island_layout.current_island_x as f32,
+                                screen_y: self.geom.win_y as f32
+                                    + island_layout.current_island_y as f32,
+                                width: self.springs.w.value,
+                                height: self.springs.h.value,
+                                radius: self.springs.r.value,
+                                extras: pager_backdrop,
+                            },
+                        );
+                        let main_target = renderer.main_target();
+                        let render_result =
+                            renderer.frame(main_target, |drawing_context, painter| {
+                                draw_island(
+                                    drawing_context,
+                                    painter,
+                                    crate::ui::island::DrawIslandParams {
+                                        layout: crate::ui::island::LayoutParams {
+                                            pager_above: island_layout.dock_bottom,
+                                            pager_bar_hover: self.bar_hover.value,
+                                            pager_close_hover: self.close_hover.value,
+                                            current_w: self.springs.w.value,
+                                            current_h: self.springs.h.value,
+                                            current_r: self.springs.r.value,
+                                            sigmas,
+                                            shadow_static: !self.springs.any_animating(),
+                                            expansion_progress: progress,
+                                            view_offset: self.springs.view.value,
+                                            compact_scale: self.config.compact_scale,
+                                            expanded_scale: self.config.expanded_scale,
+                                            hide_progress: self.springs.hide.value
+                                                * island_layout.content_hide_ratio,
+                                            compact_widget_opacity:
+                                                crate::ui::widget::compact::hide_opacity(
+                                                    self.springs.hide.value,
+                                                ),
+                                            island_x: island_layout.current_island_x as f32,
+                                            island_y: island_layout.current_island_y as f32,
+                                            stable_island_y: island_layout.stable_island_y as f32,
+                                            base_h: compact_content_h,
+                                        },
+                                        media: crate::ui::island::MediaParams {
+                                            media: if compact_components_hidden {
+                                                &default_media_info
+                                            } else {
+                                                media_info
+                                            },
+                                            music_active: music_active
+                                                && !compact_components_hidden,
+                                            available_controls,
+                                        },
+                                        lyrics: crate::ui::island::LyricsParams {
+                                            current_lyric: &self.lyrics.current_text,
+                                            current_secondary_lyric,
+                                            old_lyric: &self.lyrics.old_text,
+                                            old_secondary_lyric,
+                                            lyric_highlight: self.lyrics.highlight,
+                                            lyric_transition: self.lyrics.transition,
+                                            lyric_transition_animation: self
+                                                .lyrics
+                                                .transition_animation,
+                                            lyric_scroll_offset: self.lyrics.scroll_offset,
+                                            lyric_side_gap: self.config.lyrics_side_gap,
+                                        },
+                                        style: crate::ui::island::StyleParams {
+                                            companion: &self.companion,
+                                            agent_snapshot: self.agent.snapshot(),
+                                            agent_connected: self.agent.connected(),
+                                            companion_hidden: compact_components_hidden,
+                                            island_style: if compact_components_hidden {
+                                                "solid"
+                                            } else {
+                                                &self.config.island_style
+                                            },
+                                            host_backdrop,
+                                            use_blur: self.config.motion_blur,
+                                            font_size: self.config.font_size,
+                                            dt,
+                                            expanded_width: self.config.expanded_width,
+                                            expanded_height: self.config.expanded_height,
+                                            widget_layout: if compact_components_hidden {
+                                                &[]
+                                            } else {
+                                                &self.config.widget_layout
+                                            },
+                                            plugin_widget_layout: if compact_components_hidden {
+                                                &[]
+                                            } else {
+                                                &self.config.plugin_widget_layout
+                                            },
+                                            plugin_widgets: &self.widget_mgr,
+                                            plugin_frames: &self.plugin_frames,
+                                            plugin_host: self.plugin_host.as_deref(),
+                                            compact_widget_layout: if compact_components_hidden {
+                                                &[]
+                                            } else {
+                                                &self.config.compact_widget_layout
+                                            },
+                                            pages: &expanded_pages,
+                                        },
+                                        mini_content,
+                                        compact_overlay: &self.compact_overlay,
+                                        attention_alpha,
+                                    },
+                                )
+                            });
+                        self.renderer = Some(renderer);
+                        if let Err(error) = render_result {
+                            self.invalidate_renderer(&error.to_string(), Instant::now());
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+}
+
+impl AppHandler for App {
+    fn on_event(&mut self, event: PlatformEvent) {
+        match event {
+            PlatformEvent::Resumed => {
+                self.on_resumed();
+                return;
+            }
+            PlatformEvent::CompositionChanged => {
+                self.invalidate_renderer("DWM composition changed", Instant::now());
+                return;
+            }
+            PlatformEvent::Wake => {
+                self.next_frame_deadline = Instant::now();
+                if let Some(window_ref) = self.window {
+                    window_ref.request_redraw();
+                }
+                return;
+            }
+            PlatformEvent::Exiting => return,
+            _ => {}
+        }
+
+        let Some(id) = event_window_id(&event) else {
+            return;
+        };
+        if self
+            .settings
+            .as_ref()
+            .and_then(super::super::settings::SettingsApp::window_id)
+            == Some(id)
+        {
+            if matches!(
+                event,
+                PlatformEvent::CloseRequested { .. } | PlatformEvent::Destroyed { .. }
+            ) {
+                self.close_settings();
+                return;
+            }
+            if let (Some(settings), Some(renderer)) =
+                (self.settings.as_mut(), self.renderer.as_mut())
+            {
+                settings.handle_window_event(event, renderer);
+            }
+            if let Some(error) = self
+                .renderer
+                .as_mut()
+                .and_then(winisland_render::Renderer::take_failure)
+            {
+                self.invalidate_renderer(&error, Instant::now());
+            }
+            self.handle_plugin_settings_request();
+            if self
+                .settings
+                .as_ref()
+                .is_some_and(super::super::settings::SettingsApp::close_requested)
+            {
+                self.close_settings();
+            }
+            return;
+        }
+        self.on_window_event(id, event);
+    }
+
+    fn on_about_to_wait(&mut self) -> Option<Instant> {
+        self.on_about_to_wait();
+        let mut deadline = self.next_frame_deadline;
+        if let Some(settings_deadline) = self
+            .settings
+            .as_mut()
+            .and_then(super::super::settings::SettingsApp::update)
+        {
+            deadline = deadline.min(settings_deadline);
+        }
+        self.handle_plugin_settings_request();
+        self.window.map(|_| deadline)
+    }
+
+    fn on_exit(&mut self) {
+        self.close_settings();
+        if let Some(window_ref) = self.window.take() {
+            window().release_host_backdrop(window_ref.id());
+            self.host_backdrop = false;
+            drop(self.renderer.take());
+            window().destroy_window(window_ref.id());
+        }
+    }
+}
+
+fn event_window_id(event: &PlatformEvent) -> Option<WindowId> {
+    match event {
+        PlatformEvent::CloseRequested { id }
+        | PlatformEvent::Destroyed { id }
+        | PlatformEvent::Resized { id, .. }
+        | PlatformEvent::Moved { id, .. }
+        | PlatformEvent::ScaleFactorChanged { id, .. }
+        | PlatformEvent::ThemeChanged { id, .. }
+        | PlatformEvent::RedrawRequested { id }
+        | PlatformEvent::Focused { id, .. }
+        | PlatformEvent::CursorMoved { id, .. }
+        | PlatformEvent::CursorLeft { id }
+        | PlatformEvent::MouseInput { id, .. }
+        | PlatformEvent::MouseWheel { id, .. }
+        | PlatformEvent::KeyInput { id, .. }
+        | PlatformEvent::Touch { id, .. }
+        | PlatformEvent::DroppedFile { id, .. } => Some(*id),
+        _ => None,
+    }
+}

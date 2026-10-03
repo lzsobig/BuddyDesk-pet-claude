@@ -97,6 +97,8 @@ def _read_crash_files() -> list[dict]:
         # 2) .log / .txt 包含 stacktrace
         for ext in ("*.log", "*.txt", "*.crashlog"):
             for p in glob.glob(os.path.join(d, ext)):
+                if os.path.basename(p).lower() == "events.log":
+                    continue
                 try:
                     st = os.stat(p)
                     # 太大（>5MB）跳过
@@ -106,8 +108,9 @@ def _read_crash_files() -> list[dict]:
                         content = f.read()
                     # 只挑看起来像崩溃的
                     if any(kw in content.lower() for kw in (
-                        "traceback", "exception", "error", "崩溃", "stack",
-                        "segmentation fault", "fatal",
+                        "traceback (most recent call last)", "unhandled exception",
+                        "uncaught exception", "fatal python error", "segmentation fault",
+                        "stack overflow", "access violation",
                     )):
                         found.append({
                             "path": p,

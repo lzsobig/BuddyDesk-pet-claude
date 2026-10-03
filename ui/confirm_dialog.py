@@ -6,7 +6,7 @@ This dialog shows the command and lets the user confirm or cancel.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QPlainTextEdit,
 )
 from PySide6.QtGui import QPainter, QColor, QPen, QPolygon
 from PySide6.QtCore import QPoint
@@ -25,7 +25,8 @@ class ConfirmDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("命令确认")
         self.setModal(True)
-        self.setFixedSize(380, 220)
+        self.resize(500, 330)
+        self.setMinimumSize(380, 280)
         self.setWindowFlags(
             Qt.WindowType.Dialog
             | Qt.WindowType.FramelessWindowHint
@@ -78,7 +79,7 @@ class ConfirmDialog(QDialog):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(2)
-        title = QLabel("危险命令")
+        title = QLabel("确认本次操作")
         title.setStyleSheet(
             f"color:{RED};font-size:15px;font-weight:700;"
             f"background:transparent;border:none;"
@@ -96,10 +97,9 @@ class ConfirmDialog(QDialog):
         card_l.addLayout(title_row)
 
         # Command display
-        cmd_lbl = QLabel(self._command)
-        cmd_lbl.setWordWrap(True)
-        cmd_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        cmd_lbl.setMaximumHeight(48)
+        cmd_lbl = QPlainTextEdit(self._command)
+        cmd_lbl.setReadOnly(True)
+        cmd_lbl.setMinimumHeight(120)
         cmd_lbl.setStyleSheet(
             f"background:{BG_DEEP};color:{TEXT_PRIMARY};"
             f"border:1px solid {BORDER};border-radius:{RADIUS_SM}px;"

@@ -1,0 +1,87 @@
+name: Feature Request
+description: Request a new feature or major enhancement
+title: "[Feature] "
+labels: ["enhancement", "pending"]
+assignees: []
+body:
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Summarize the requested feature in one sentence
+      placeholder: One-line summary
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this needed, and what problem does it solve?
+      placeholder: Explain why this feature is needed
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How it should work
+      description: "Optional: describe your idea for how this should work"
+      placeholder: Describe what you expect to see or how you would like it to behave
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Other possible solutions
+      description: "Optional: have you considered any workarounds or other ways to solve this?"
+      placeholder: Alternatives or trade-offs
+    validations:
+      required: false
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact on existing features
+      description: "Optional: would this change affect any current features or settings?"
+      placeholder: "For example: May conflict with the current compact mode"
+    validations:
+      required: false
+
+  - type: textarea
+    id: mockups
+    attributes:
+      label: UI mockups
+      description: "Optional: attach mockups, links, or screenshots"
+      placeholder: Paste an image link or describe the mockup
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Expected outcome
+      description: How do you expect this feature to work? When would you consider it complete?
+      placeholder: Describe what success looks like to you
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: check-list
+    attributes:
+      label: Checklist
+      description: Check all inspections according to the checklist below.
+      options:
+        - label: "I'm running the official release build (GitHub Releases), not a fork or third-party build"
+          required: false
+        - label: "I confirm that I'm running the latest version, whether stable or nightly"
+          required: false
+        - label: "I confirm that I have provided my Windows version and build number (e.g. Windows 11 23H2, build 22631)"
+          required: false
+        - label: "I confirm that I have searched for existing issues and this is not a duplicate"
+          required: false
+        - label: "I confirm that I have not read these checkboxes and therefore I just ticked them all."
+          required: false
+        - label: "I am well aware that if the issue is not filled out correctly and completely, it will simply be closed without any response or reason."
+          required: false

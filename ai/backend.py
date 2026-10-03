@@ -212,8 +212,9 @@ class ClaudeCodeBackend(AIBackend):
         self._process = None
         self._process_lock = threading.Lock()
 
-    def send_message(self, messages: list, on_chunk=None) -> str:
+    def send_message(self, messages: list, on_chunk=None, on_progress=None) -> str:
         self._cancel_event.clear()
+        self._agent_read_only = True
         prompt_parts = [f"[System Instructions]\n{self.get_system_prompt()}\n"]
         for msg in messages:
             role = msg.get("role", "user")
@@ -231,7 +232,9 @@ class ClaudeCodeBackend(AIBackend):
         stream_error: str | None = None
         # P0-2: only pass --model when explicitly set (None = CLI default)
         cli_args = [self.cli_path, "--print", "--output-format", "stream-json",
-                    "--verbose"]
+                    "--verbose", "--include-partial-messages"]
+        if getattr(self, "_agent_read_only", False):
+            cli_args.extend(["--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'])
         if self.model:
             cli_args.extend(["--model", self.model])
         _use_shell = _needs_shell_for_cli(self.cli_path)
@@ -274,6 +277,7 @@ class ClaudeCodeBackend(AIBackend):
 
             full_response = ""
             saw_json_chunk = False
+            message_streamed = False
             for line in process.stdout:
                 if self._cancel_event.is_set():
                     _terminate_process_tree(process)
@@ -284,19 +288,41 @@ class ClaudeCodeBackend(AIBackend):
                 try:
                     data = json.loads(line)
                     saw_json_chunk = True
-                    if data.get("type") == "assistant" and "message" in data:
-                        content = data["message"].get("content", "")
-                        if isinstance(content, list):
-                            for block in content:
-                                if block.get("type") == "text":
-                                    text = block.get("text", "")
-                                    full_response += text
-                                    if on_chunk:
-                                        on_chunk(text)
-                        elif isinstance(content, str):
-                            full_response += content
+                    event_type = data.get("type")
+                    if event_type == "system" and data.get("subtype") == "init":
+                        if on_progress:
+                            on_progress("正在准备")
+                    elif event_type == "stream_event":
+                        event = data.get("event", {})
+                        if event.get("type") == "message_start":
+                            message_streamed = False
+                        block = event.get("content_block", {})
+                        delta = event.get("delta", {})
+                        if event.get("type") == "content_block_start" and on_progress:
+                            if block.get("type") == "thinking":
+                                on_progress("正在思考")
+                            elif block.get("type") == "tool_use":
+                                on_progress("正在使用工具")
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text", "")
+                            full_response += text
+                            message_streamed = True
                             if on_chunk:
-                                on_chunk(content)
+                                on_chunk(text)
+                        elif delta.get("type") == "thinking_delta" and on_progress:
+                            on_progress("正在思考")
+                    elif event_type == "assistant" and "message" in data:
+                        content = data["message"].get("content", "")
+                        blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+                        for block in blocks:
+                            if block.get("type") == "text" and not message_streamed:
+                                text = block.get("text", "")
+                                full_response += text
+                                if on_chunk:
+                                    on_chunk(text)
+                            elif block.get("type") == "tool_use" and on_progress:
+                                on_progress("正在使用工具")
+                        message_streamed = False
                 except json.JSONDecodeError:
                     # Let the process finish and use the bounded stderr buffer
                     # below; never block on stderr while the child is running.
@@ -337,6 +363,8 @@ class ClaudeCodeBackend(AIBackend):
         if stream_error:
             print(f"[ClaudeCode] streaming failed ({stream_error}); falling back to non-streaming")
         fallback_args = [self.cli_path, "--print"]
+        if getattr(self, "_agent_read_only", False):
+            fallback_args.extend(["--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'])
         if self.model:
             fallback_args.extend(["--model", self.model])
         try:

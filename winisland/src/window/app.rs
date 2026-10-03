@@ -1,0 +1,676 @@
+use crate::core::agent::AgentBridge;
+use crate::core::audio::AudioProcessor;
+use crate::core::companion::Companion;
+use crate::core::persistence::{get_config_path, load_config};
+use crate::core::smtc::{MediaInfo, SmtcListener};
+use crate::platform::WindowRef;
+use crate::plugin::inventory::PluginManager;
+use crate::ui::compact::CompactOverlay;
+use crate::ui::expanded::pager::ExpandedPage;
+use crate::window::settings::SettingsApp;
+use pollkit::{Cooldown, Every, Job};
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use winisland_core::config::{AppConfig, LyricTransitionAnimation, LyricTransitionMode};
+use winisland_core::context::ContextManager;
+use winisland_core::lyrics::LyricHighlight;
+use winisland_core::physics::Spring;
+use winisland_core::widgets::WidgetManager;
+use winisland_platform::WindowPoint;
+use winisland_plugin_host::draw::replay::PreparedFrame;
+use winisland_plugin_host::host::PluginHost;
+use winisland_plugin_package::manifest::PluginManifest;
+use winisland_plugin_package::marketplace::MarketplaceCatalog;
+use winisland_render::Renderer;
+
+mod events;
+mod frame;
+mod input;
+mod layout;
+mod pages;
+mod startup;
+mod system;
+mod v2;
+
+type InstallResult = Result<(PluginManifest, PathBuf), String>;
+type MarketplaceCatalogResult = Result<MarketplaceCatalog, String>;
+type MarketplaceDownloadResult = Result<PathBuf, String>;
+const RIGHT_DRAG_THRESHOLD: i32 = 4;
+const DOUBLE_CLICK_DISTANCE: f32 = 8.0;
+pub(super) const DEFAULT_ANIMATION_REFRESH_RATE_MILLIHERTZ: u32 = 144_000;
+pub(super) const DEFAULT_ANIMATION_FRAME_INTERVAL: Duration = Duration::from_micros(6_944);
+const HIDE_HOTKEY: winisland_platform::Hotkey = winisland_platform::Hotkey {
+    ctrl: true,
+    alt: true,
+    shift: false,
+    win: false,
+    key: 'H',
+};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DragAxis {
+    Horizontal,
+    Vertical,
+}
+
+struct PluginMediaSource {
+    resource_id: u64,
+    available_controls: u32,
+    info: MediaInfo,
+}
+
+pub struct App {
+    window: Option<WindowRef>,
+    host_backdrop: bool,
+    renderer: Option<Renderer>,
+    settings: Option<SettingsApp>,
+    tray_installed: bool,
+    smtc: SmtcListener,
+    audio: AudioProcessor,
+    companion: Companion,
+    agent: AgentBridge,
+    compact_overlay: CompactOverlay,
+    config: AppConfig,
+    expanded: bool,
+    expanded_press_started_inside: bool,
+    expanded_header_press: Option<(i32, i32)>,
+    components_hidden: bool,
+    current_page: ExpandedPage,
+    music_page_available: bool,
+    wheel_accumulator: f32,
+    last_wheel_page_at: Option<Instant>,
+    fullscreen_hide_paused: bool,
+    close_hover: Spring,
+    bar_hover: Spring,
+    visible: bool,
+    springs: IslandSprings,
+    geom: WindowGeometry,
+    smtc_media_info: MediaInfo,
+    last_media_title: String,
+    lyrics: LyricState,
+    idle_timer: Instant,
+    effect_refresh: Every,
+    hide: HideState,
+    is_dragging: bool,
+    dismissing_notification: bool,
+    drag_start_px: i32,
+    drag_start_py: i32,
+    drag_start_hide_val: f32,
+    drag_has_moved: bool,
+    drag_axis: Option<DragAxis>,
+    last_update_time: Instant,
+    last_render_time: Instant,
+    topmost_check: Every,
+    renderer_retry_at: Option<Instant>,
+    fullscreen_check: Every,
+    config_check: Every,
+    monitor_check: Every,
+    working_set_trim: Every,
+    compact_widget_refresh: Cooldown,
+    last_config_modified: Option<SystemTime>,
+    next_frame_deadline: Instant,
+    animation_frame_interval: Duration,
+    display_frame_interval: Duration,
+    width_hiding_last_frame: bool,
+    restoring_hide_width: bool,
+    seek: SeekDrag,
+    is_fullscreen_suppressed: bool,
+    attention_pulse_started: Option<Instant>,
+    is_cursor_suppressed: bool,
+    hidden_reveal_click: HiddenRevealClick,
+    cover_click: DoubleClick,
+    touch_id: Option<u64>,
+    touch_pos: WindowPoint,
+    last_touch_at: Option<Instant>,
+    ctx_mgr: ContextManager,
+    widget_mgr: WidgetManager,
+    plugin_mgr: PluginManager,
+    plugin_host: Option<Rc<PluginHost>>,
+    plugin_frames: HashMap<u64, PreparedFrame>,
+    v2_widget_ids: HashSet<u64>,
+    v2_context_ids: HashSet<u64>,
+    v2_context_revision: u64,
+    v2_media_revision: u64,
+    v2_album_art_hash: Cell<Option<u64>>,
+    v2_settings_revision: u64,
+    plugin_media_source: Option<PluginMediaSource>,
+    is_light_theme: bool,
+    pending_install: Job<InstallResult>,
+    marketplace_catalog: Option<MarketplaceCatalog>,
+    pending_marketplace_catalog: Job<MarketplaceCatalogResult>,
+    pending_marketplace_download: Job<MarketplaceDownloadResult>,
+    right_press_cursor: Option<(i32, i32)>,
+    is_right_dragging: bool,
+    right_drag_start_offset: Option<(i32, i32)>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        let config = load_config();
+        crate::ui::widget::resource_usage::set_configs(
+            &config.resource_metrics,
+            &config.compact_resource_metrics,
+        );
+        if config
+            .widget_layout
+            .iter()
+            .any(|slot| slot.widget == Some(winisland_core::config::WidgetKind::ResourceUsage))
+        {
+            crate::ui::widget::resource_usage::with_resource_usage(
+                &config.resource_metrics,
+                |_| (),
+            );
+        }
+        winisland_core::config::set_resource_widget_span(
+            config.resource_widget_columns,
+            config.resource_widget_rows,
+        );
+        let last_config_modified = std::fs::metadata(get_config_path())
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        winisland_render::text::FontManager::global()
+            .set_custom_font_path(config.custom_font_path.as_deref());
+        let plugin_mgr = PluginManager::default();
+        let plugin_host = match PluginHost::new(plugin_mgr.plugin_dir.clone(), 1) {
+            Ok(host) => Some(Rc::new(host)),
+            Err(error) => {
+                log::error!("Cannot initialize ABI v2 plugin host: {error}");
+                None
+            }
+        };
+        Self {
+            window: None,
+            host_backdrop: false,
+            renderer: None,
+            settings: None,
+            tray_installed: false,
+            config: config.clone(),
+            expanded: false,
+            expanded_press_started_inside: false,
+            expanded_header_press: None,
+            components_hidden: false,
+            current_page: ExpandedPage::Companion,
+            music_page_available: false,
+            wheel_accumulator: 0.0,
+            last_wheel_page_at: None,
+            fullscreen_hide_paused: false,
+            close_hover: Spring::new(0.0),
+            bar_hover: Spring::new(0.0),
+            visible: true,
+            springs: IslandSprings::new(&config),
+            geom: WindowGeometry::default(),
+            smtc: SmtcListener::new(
+                config.smtc_enabled && crate::platform::capabilities().media_session,
+                config.lyrics_mode.clone(),
+                config.lyrics_source.clone(),
+                config.lyrics_local_dir.clone(),
+                config.smtc_apps.clone(),
+                config.smtc_known_apps.clone(),
+                plugin_host.as_ref().map(|host| host.lyrics_bridge()),
+            ),
+            audio: AudioProcessor::new(),
+            companion: Companion::default(),
+            agent: AgentBridge::new(),
+            compact_overlay: CompactOverlay::new(
+                config.replace_native_volume_flyout,
+                config.brightness_overlay_enabled,
+            ),
+            smtc_media_info: MediaInfo::default(),
+            last_media_title: String::new(),
+            lyrics: LyricState::default(),
+            idle_timer: Instant::now(),
+            effect_refresh: Every::secs(1),
+            hide: HideState::default(),
+            is_dragging: false,
+            dismissing_notification: false,
+            drag_start_px: 0,
+            drag_start_py: 0,
+            drag_start_hide_val: 0.0,
+            drag_has_moved: false,
+            drag_axis: None,
+            last_update_time: Instant::now(),
+            last_render_time: Instant::now(),
+            topmost_check: Every::secs(1),
+            renderer_retry_at: None,
+            fullscreen_check: Every::millis(100),
+            config_check: Every::millis(500),
+            monitor_check: Every::secs(1),
+            working_set_trim: Every::new(frame::WORKING_SET_TRIM_INTERVAL),
+            compact_widget_refresh: Cooldown::ready(),
+            last_config_modified,
+            next_frame_deadline: Instant::now(),
+            animation_frame_interval: DEFAULT_ANIMATION_FRAME_INTERVAL,
+            display_frame_interval: DEFAULT_ANIMATION_FRAME_INTERVAL,
+            width_hiding_last_frame: false,
+            restoring_hide_width: false,
+            seek: SeekDrag::default(),
+            is_fullscreen_suppressed: false,
+            attention_pulse_started: None,
+            is_cursor_suppressed: false,
+            hidden_reveal_click: HiddenRevealClick::default(),
+            cover_click: DoubleClick::default(),
+            touch_id: None,
+            touch_pos: WindowPoint::new(0.0, 0.0),
+            last_touch_at: None,
+            ctx_mgr: ContextManager::new(),
+            widget_mgr: WidgetManager::new(),
+            plugin_mgr,
+            plugin_host,
+            plugin_frames: HashMap::new(),
+            v2_widget_ids: HashSet::new(),
+            v2_context_ids: HashSet::new(),
+            v2_context_revision: 0,
+            v2_media_revision: 0,
+            v2_album_art_hash: Cell::new(None),
+            v2_settings_revision: 0,
+            plugin_media_source: None,
+            is_light_theme: false,
+            pending_install: Job::idle(),
+            marketplace_catalog: None,
+            pending_marketplace_catalog: Job::idle(),
+            pending_marketplace_download: Job::idle(),
+            right_press_cursor: None,
+            is_right_dragging: false,
+            right_drag_start_offset: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct HiddenRevealClick {
+    left_pressed: bool,
+    sequence: DoubleClick,
+}
+
+impl HiddenRevealClick {
+    fn update(
+        &mut self,
+        active: bool,
+        left_pressed: bool,
+        position: (f32, f32),
+        now: Instant,
+        interval: Duration,
+    ) -> bool {
+        let pressed = left_pressed && !self.left_pressed;
+        self.left_pressed = left_pressed;
+        if !active {
+            self.sequence.reset();
+            return false;
+        }
+        if !pressed {
+            return false;
+        }
+        self.sequence.register(position, now, interval)
+    }
+}
+
+#[derive(Default)]
+struct DoubleClick {
+    first_click: Option<(Instant, f32, f32)>,
+}
+
+impl DoubleClick {
+    fn register(&mut self, position: (f32, f32), now: Instant, interval: Duration) -> bool {
+        let (x, y) = position;
+        if let Some((first, first_x, first_y)) = self.first_click.take()
+            && now.saturating_duration_since(first) <= interval
+            && (x - first_x).abs() <= DOUBLE_CLICK_DISTANCE
+            && (y - first_y).abs() <= DOUBLE_CLICK_DISTANCE
+        {
+            return true;
+        }
+        self.first_click = Some((now, x, y));
+        false
+    }
+
+    fn reset(&mut self) {
+        self.first_click = None;
+    }
+}
+
+#[derive(Default)]
+struct WindowGeometry {
+    os_w: u32,
+    os_h: u32,
+    win_x: i32,
+    win_y: i32,
+    configured_x: i32,
+    configured_y: i32,
+    monitor_size: (u32, u32),
+    monitor_pos: (i32, i32),
+    position_restore_after: Option<Instant>,
+}
+
+#[derive(Default)]
+struct SeekDrag {
+    active: bool,
+    bar_left: f32,
+    bar_right: f32,
+    duration_ms: u64,
+    preview_ms: u64,
+    media_resource_id: Option<u64>,
+}
+
+impl SeekDrag {
+    fn begin(
+        &mut self,
+        bar_left: f32,
+        bar_right: f32,
+        duration_ms: u64,
+        preview_ms: u64,
+        media_resource_id: Option<u64>,
+    ) {
+        self.active = true;
+        self.bar_left = bar_left;
+        self.bar_right = bar_right;
+        self.duration_ms = duration_ms;
+        self.preview_ms = preview_ms;
+        self.media_resource_id = media_resource_id;
+    }
+
+    fn preview_at(&mut self, click_x: f32) {
+        let bar_width = self.bar_right - self.bar_left;
+        let ratio = if bar_width > 0.0 {
+            ((click_x - self.bar_left) / bar_width).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self.preview_ms = (ratio as f64 * self.duration_ms as f64) as u64;
+    }
+}
+
+struct LyricState {
+    current_text: String,
+    current_secondary_text: String,
+    old_text: String,
+    old_secondary_text: String,
+    highlight: Option<LyricHighlight>,
+    transition: f32,
+    transition_animation: LyricTransitionAnimation,
+    random_state: u64,
+    scroll_offset: f32,
+    scroll_pause: f32,
+}
+
+impl Default for LyricState {
+    fn default() -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let random_state =
+            (now.as_secs() ^ (u64::from(now.subsec_nanos()) << 32) ^ u64::from(std::process::id()))
+                .max(1);
+        Self {
+            current_text: String::new(),
+            current_secondary_text: String::new(),
+            old_text: String::new(),
+            old_secondary_text: String::new(),
+            highlight: None,
+            transition: 1.0,
+            transition_animation: LyricTransitionAnimation::Blur,
+            random_state,
+            scroll_offset: 0.0,
+            scroll_pause: 0.0,
+        }
+    }
+}
+
+impl LyricState {
+    fn transition_to(
+        &mut self,
+        text: String,
+        secondary_text: String,
+        highlight: Option<LyricHighlight>,
+        show_immediately: bool,
+        transition_mode: LyricTransitionMode,
+    ) {
+        self.old_text = std::mem::replace(&mut self.current_text, text);
+        self.old_secondary_text =
+            std::mem::replace(&mut self.current_secondary_text, secondary_text);
+        self.highlight = highlight;
+        self.transition = if show_immediately { 1.0 } else { 0.0 };
+        let random_value = self.next_random();
+        self.transition_animation = transition_mode.animation(random_value);
+        self.scroll_offset = 0.0;
+        self.scroll_pause = 0.0;
+    }
+
+    fn next_random(&mut self) -> u64 {
+        let mut value = self.random_state;
+        value ^= value << 13;
+        value ^= value >> 7;
+        value ^= value << 17;
+        self.random_state = value;
+        value
+    }
+}
+
+#[derive(Default)]
+struct HideState {
+    auto: bool,
+    manual: bool,
+    fullscreen: bool,
+    notification_reveal: bool,
+    overlay_reveal: bool,
+    origin: Option<(i32, i32)>,
+}
+
+impl HideState {
+    fn is_hidden(&self) -> bool {
+        self.has_hidden_reason() && !self.notification_reveal && !self.overlay_reveal
+    }
+
+    fn has_hidden_reason(&self) -> bool {
+        self.auto || self.fullscreen || self.manual
+    }
+}
+
+struct IslandSprings {
+    w: Spring,
+    h: Spring,
+    r: Spring,
+    view: Spring,
+    hide: Spring,
+    expanded_target: bool,
+}
+
+impl IslandSprings {
+    const EQUAL_WIDTH_THRESHOLD_RATIO: f32 = 0.02;
+    const EQUAL_WIDTH_EXPANSION_IMPULSE_RATIO: f32 = 0.012;
+
+    fn new(config: &AppConfig) -> Self {
+        Self {
+            w: Spring::new(config.base_width * config.compact_scale),
+            h: Spring::new(config.base_height * config.compact_scale),
+            r: Spring::new((config.base_height * config.compact_scale) / 2.0),
+            view: Spring::new(0.0),
+            hide: Spring::new(0.0),
+            expanded_target: false,
+        }
+    }
+
+    fn retarget_expansion(
+        &mut self,
+        expanded: bool,
+        target_w: f32,
+        target_h: f32,
+        target_r: f32,
+        target_view: f32,
+    ) {
+        if self.expanded_target == expanded {
+            return;
+        }
+        self.expanded_target = expanded;
+        if expanded
+            && (target_w - self.w.value).abs() <= target_w * Self::EQUAL_WIDTH_THRESHOLD_RATIO
+        {
+            self.w.velocity = target_w * Self::EQUAL_WIDTH_EXPANSION_IMPULSE_RATIO;
+        } else {
+            self.w.redirect_velocity_towards(target_w);
+        }
+        self.h.redirect_velocity_towards(target_h);
+        self.r.redirect_velocity_towards(target_r);
+        self.view.redirect_velocity_towards(target_view);
+    }
+
+    fn any_animating(&self) -> bool {
+        self.w.velocity.abs() > 0.001
+            || self.h.velocity.abs() > 0.001
+            || self.r.velocity.abs() > 0.001
+            || self.view.velocity.abs() > 0.001
+            || self.hide.velocity.abs() > 0.001
+    }
+}
+
+struct IslandLayout {
+    offset_x: f64,
+    dock_bottom: bool,
+    island_y: f64,
+    current_island_x: f64,
+    current_island_y: f64,
+    stable_island_y: f64,
+    hide_distance: f64,
+    content_hide_ratio: f32,
+    hidden_reveal_x: f64,
+    hidden_reveal_y: f64,
+    hidden_reveal_w: f64,
+    hidden_reveal_h: f64,
+}
+
+impl App {
+    fn current_media_info(&self) -> &MediaInfo {
+        self.plugin_media_source
+            .as_ref()
+            .map_or(&self.smtc_media_info, |source| &source.info)
+    }
+
+    fn media_control_available(&self, control: u32) -> bool {
+        self.plugin_media_source
+            .as_ref()
+            .map_or(self.config.smtc_enabled, |source| {
+                source.available_controls & control != 0
+            })
+    }
+
+    fn media_active(&self) -> bool {
+        if let Some(source) = &self.plugin_media_source {
+            return !source.info.title.is_empty();
+        }
+        self.config.smtc_enabled && !self.smtc_media_info.title.is_empty()
+    }
+
+    fn audio_target_app_id(&self) -> &str {
+        if self.plugin_media_source.is_some() || !self.config.smtc_enabled {
+            ""
+        } else {
+            &self.smtc_media_info.source_app_id
+        }
+    }
+
+    fn dispatch_media_command(&self, command: u32, position_ms: u64) {
+        if let Some(source) = &self.plugin_media_source {
+            let result = self
+                .plugin_host
+                .as_ref()
+                .ok_or("ABI v2 host unavailable".to_string())
+                .and_then(|host| {
+                    host.dispatch_media_command(source.resource_id, command, position_ms)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = result {
+                log::warn!("Plugin media command failed: {error}");
+            }
+            return;
+        }
+        match command {
+            winisland_plugin_api::types::v2::context::MEDIA_COMMAND_TOGGLE_PLAY => {
+                self.smtc.request_toggle_play()
+            }
+            winisland_plugin_api::types::v2::context::MEDIA_COMMAND_PREVIOUS => {
+                self.smtc.request_prev()
+            }
+            winisland_plugin_api::types::v2::context::MEDIA_COMMAND_NEXT => {
+                self.smtc.request_next()
+            }
+            winisland_plugin_api::types::v2::context::MEDIA_COMMAND_SEEK => {
+                self.smtc.request_seek(position_ms)
+            }
+            _ => (),
+        }
+    }
+
+    fn dispatch_seek_command(&mut self) {
+        let position_ms = self.seek.preview_ms.min(self.seek.duration_ms);
+        if let Some(resource_id) = self.seek.media_resource_id {
+            let result = self
+                .plugin_host
+                .as_ref()
+                .ok_or("ABI v2 host unavailable".to_string())
+                .and_then(|host| {
+                    host.dispatch_media_command(
+                        resource_id,
+                        winisland_plugin_api::types::v2::context::MEDIA_COMMAND_SEEK,
+                        position_ms,
+                    )
+                    .map_err(|error| error.to_string())
+                });
+            if let Err(error) = result {
+                log::warn!("Plugin media seek failed: {error}");
+            } else if let Some(source) = self
+                .plugin_media_source
+                .as_mut()
+                .filter(|source| source.resource_id == resource_id)
+            {
+                source.info.apply_seek(position_ms);
+            }
+        } else {
+            self.smtc.request_seek(position_ms);
+            self.smtc_media_info.apply_seek(position_ms);
+        }
+    }
+
+    fn finish_seek(&mut self) -> bool {
+        if !self.seek.active {
+            return false;
+        }
+        self.seek.active = false;
+        if self.seek.duration_ms > 0 {
+            self.seek.preview_ms = self.seek.preview_ms.min(self.seek.duration_ms);
+            crate::ui::expanded::music_view::snap_progress(
+                self.seek.preview_ms as f32 / self.seek.duration_ms as f32,
+            );
+            self.dispatch_seek_command();
+        }
+        true
+    }
+
+    fn is_hidden(&self) -> bool {
+        self.hide.is_hidden()
+    }
+
+    fn is_width_hiding(&self) -> bool {
+        self.is_hidden() || (self.is_dragging && self.hide.origin.is_some())
+    }
+
+    fn fullscreen_hide_active(&self) -> bool {
+        self.config.fullscreen_auto_hide
+            && self.is_fullscreen_suppressed
+            && !self.fullscreen_hide_paused
+    }
+
+    fn reveal_island(&mut self) {
+        if self.fullscreen_hide_active() {
+            return;
+        }
+        self.hide.auto = false;
+        self.hide.fullscreen = false;
+        self.hide.manual = false;
+        self.hide.notification_reveal = false;
+        self.hide.overlay_reveal = false;
+        self.springs.hide.velocity = -0.65;
+        self.idle_timer = Instant::now();
+    }
+}

@@ -1,0 +1,556 @@
+use crate::core::smtc::MediaInfo;
+use crate::ui::expanded::music_view::{
+    DrawVisualizerParams, draw_text_cached, draw_visualizer, get_cached_media_image,
+};
+use winisland_core::config::LyricTransitionAnimation;
+use winisland_core::context::MiniContent;
+use winisland_core::lyrics::LyricHighlight;
+use winisland_render::text::{DrawTextCachedParams, FontManager};
+use winisland_render::{BlurSpec, Image, ImageOptions, Painter, Radius, Rect, Rgba, Sampling};
+
+const PENDING_LYRIC_CHANNEL: u8 = 190;
+const SECONDARY_LYRIC_SCALE: f32 = 0.85;
+const LYRIC_PAIR_GAP_SCALE: f32 = 0.18;
+const SECONDARY_LYRIC_CHANNEL: u8 = 176;
+const MIN_VISIBLE_OPACITY: f32 = 0.01;
+const MIN_MINI_CONTENT_WIDTH: f32 = 45.0;
+const MINI_COVER_SIZE: f32 = 18.0;
+const MINI_COVER_LEFT_INSET: f32 = 10.0;
+const MINI_COVER_RADIUS: f32 = 5.0;
+const MINI_VISUALIZER_RIGHT_INSET: f32 = 17.0;
+const MINI_VISUALIZER_WIDTH_SCALE: f32 = 0.55;
+const MINI_VISUALIZER_SMOOTHING: (f32, f32) = (0.6, 0.08);
+const LYRIC_EXPANSION_FADE_RATE: f32 = 2.5;
+const LYRIC_TRANSITION_BLUR_SIGMA: f32 = 6.0;
+const LYRIC_TRANSITION_BLUR_X_SCALE: f32 = 0.25;
+const LYRIC_TRANSITION_OFFSET: f32 = 10.0;
+const MIN_BLUR_SIGMA: f32 = 0.1;
+const PLUGIN_FONT_SCALE: f32 = 0.7;
+const DEFAULT_PLUGIN_FONT_SIZE: f32 = 11.0;
+const PLUGIN_HORIZONTAL_INSET: f32 = 20.0;
+const PLUGIN_PRIMARY_BASELINE_OFFSET: f32 = 0.3;
+const PLUGIN_SECONDARY_FONT_SCALE: f32 = 0.8;
+const PLUGIN_SECONDARY_ALPHA: f32 = 0.7;
+const PLUGIN_SECONDARY_LINE_SPACING: f32 = 1.3;
+
+pub(crate) fn lyric_font_size(font_size: f32, global_scale: f32) -> f32 {
+    if font_size > 0.0 {
+        font_size * 0.8 * global_scale
+    } else {
+        12.0 * global_scale
+    }
+}
+
+pub(crate) fn lyric_insets(side_gap: f32) -> (f32, f32) {
+    (
+        MINI_COVER_LEFT_INSET + MINI_COVER_SIZE + side_gap,
+        MINI_VISUALIZER_RIGHT_INSET + 15.0 * MINI_VISUALIZER_WIDTH_SCALE + side_gap,
+    )
+}
+
+pub(crate) fn lyric_pair_height(font_size: f32, global_scale: f32) -> f32 {
+    let primary_size = lyric_font_size(font_size, global_scale);
+    primary_size * (1.0 + SECONDARY_LYRIC_SCALE + LYRIC_PAIR_GAP_SCALE) + 8.0 * global_scale
+}
+
+pub(super) struct MiniContentParams<'a> {
+    pub(super) companion: Option<&'a crate::core::companion::Companion>,
+    pub(super) painter: Painter<'a>,
+    pub(super) content: Option<MiniContent<'a>>,
+    pub(super) mini_alpha: f32,
+    pub(super) current_w: f32,
+    pub(super) global_scale: f32,
+    pub(super) media: &'a MediaInfo,
+    pub(super) offset_x: f32,
+    pub(super) stable_offset_y: f32,
+    pub(super) base_h: f32,
+    pub(super) palette: &'a [Rgba],
+    pub(super) viz_h_scale: f32,
+    pub(super) current_lyric: &'a str,
+    pub(super) current_secondary_lyric: &'a str,
+    pub(super) old_lyric: &'a str,
+    pub(super) old_secondary_lyric: &'a str,
+    pub(super) lyric_highlight: Option<LyricHighlight>,
+    pub(super) expansion_progress: f32,
+    pub(super) font_size: f32,
+    pub(super) lyric_scroll_offset: f32,
+    pub(super) lyric_side_gap: f32,
+    pub(super) lyric_transition: f32,
+    pub(super) lyric_transition_animation: LyricTransitionAnimation,
+    pub(super) text_color: Rgba,
+}
+
+pub(super) fn draw_mini_content(params: MiniContentParams<'_>) {
+    if params.mini_alpha <= MIN_VISIBLE_OPACITY
+        || params.current_w <= MIN_MINI_CONTENT_WIDTH * params.global_scale
+    {
+        return;
+    }
+    let Some(content) = params.content else {
+        if let Some(companion) = params.companion {
+            crate::ui::expanded::companion_view::draw_companion_mini(
+                params.painter,
+                Rect::from_xywh(
+                    params.offset_x,
+                    params.stable_offset_y,
+                    params.current_w,
+                    params.base_h,
+                ),
+                params.global_scale,
+                scaled_alpha(u8::MAX, params.mini_alpha),
+                companion,
+            );
+        }
+        return;
+    };
+    let alpha = scaled_alpha(u8::MAX, params.mini_alpha);
+    match content {
+        MiniContent::Music => draw_music_content(&params, alpha),
+        MiniContent::Plugin(context) => draw_plugin_content(&params, context, alpha),
+    }
+}
+
+fn draw_music_content(params: &MiniContentParams<'_>, alpha: u8) {
+    draw_mini_cover(params, alpha);
+    draw_visualizer(DrawVisualizerParams {
+        painter: params.painter,
+        x: params.offset_x + params.current_w - MINI_VISUALIZER_RIGHT_INSET * params.global_scale,
+        y: params.stable_offset_y + params.base_h / 2.0,
+        alpha,
+        is_playing: params.media.is_playing,
+        palette: params.palette,
+        spectrum: &params.media.spectrum,
+        w_scale: MINI_VISUALIZER_WIDTH_SCALE * params.global_scale,
+        h_scale: params.viz_h_scale * params.global_scale,
+        smooth_factors: MINI_VISUALIZER_SMOOTHING,
+    });
+    draw_mini_lyrics(params, alpha);
+}
+
+fn draw_mini_cover(params: &MiniContentParams<'_>, alpha: u8) {
+    let Some(image) = get_cached_media_image(params.media) else {
+        return;
+    };
+    let size = MINI_COVER_SIZE * params.global_scale;
+    let x = params.offset_x + MINI_COVER_LEFT_INSET * params.global_scale;
+    let y = params.stable_offset_y + (params.base_h - size) / 2.0;
+    let painter = params.painter;
+    painter.save();
+    painter.clip_round_rect(
+        Rect::from_xywh(x, y, size, size),
+        Radius::uniform(MINI_COVER_RADIUS * params.global_scale),
+    );
+    let source_rect = center_crop_rect(&image);
+    let mut options = ImageOptions::default()
+        .with_sampling(Sampling::LinearLinear)
+        .with_alpha_f(f32::from(alpha) / f32::from(u8::MAX));
+    if let Some(source) = source_rect {
+        options = options.with_src(source);
+    }
+    painter.draw_image(&image, Rect::from_xywh(x, y, size, size), &options);
+    painter.restore();
+}
+
+fn center_crop_rect(image: &Image) -> Option<Rect> {
+    let width = image.width() as f32;
+    let height = image.height() as f32;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let edge = width.min(height);
+    Some(Rect::from_xywh(
+        (width - edge) / 2.0,
+        (height - edge) / 2.0,
+        edge,
+        edge,
+    ))
+}
+
+fn draw_mini_lyrics(params: &MiniContentParams<'_>, alpha: u8) {
+    if !has_lyrics(params) {
+        return;
+    }
+    let lyric_alpha = scaled_alpha(
+        alpha,
+        (1.0 - params.expansion_progress * LYRIC_EXPANSION_FADE_RATE).clamp(0.0, 1.0),
+    );
+    if lyric_alpha == 0 {
+        return;
+    }
+
+    let (left_inset, right_inset) = lyric_insets(params.lyric_side_gap);
+    let space_left = params.offset_x + left_inset * params.global_scale;
+    let space_right = params.offset_x + params.current_w - right_inset * params.global_scale;
+    let available_width = space_right - space_left;
+    if available_width <= 0.0 {
+        return;
+    }
+    let scrolling = params.lyric_scroll_offset > 0.0;
+    let center_x = space_left + available_width / 2.0;
+    let layout = LyricLayout {
+        primary_anchor_x: if scrolling {
+            space_left - params.lyric_scroll_offset
+        } else {
+            center_x
+        },
+        secondary_center_x: center_x,
+        center_y: params.stable_offset_y + params.base_h / 2.0,
+        size: lyric_font_size(params.font_size, params.global_scale),
+        primary_centered: !scrolling,
+    };
+
+    params.painter.save();
+    params.painter.clip_rect(Rect::from_xywh(
+        space_left,
+        params.stable_offset_y,
+        available_width,
+        params.base_h,
+    ));
+    draw_lyric_transition(
+        params,
+        layout,
+        lyric_alpha,
+        params.lyric_transition_animation,
+    );
+    params.painter.restore();
+}
+
+fn has_lyrics(params: &MiniContentParams<'_>) -> bool {
+    !params.current_lyric.is_empty()
+        || !params.current_secondary_lyric.is_empty()
+        || !params.old_lyric.is_empty()
+        || !params.old_secondary_lyric.is_empty()
+}
+
+#[derive(Clone, Copy)]
+struct LyricLayout {
+    primary_anchor_x: f32,
+    secondary_center_x: f32,
+    center_y: f32,
+    size: f32,
+    primary_centered: bool,
+}
+
+fn draw_lyric_transition(
+    params: &MiniContentParams<'_>,
+    layout: LyricLayout,
+    alpha: u8,
+    animation: LyricTransitionAnimation,
+) {
+    let transition = lyric_transition_progress(params.lyric_transition);
+    let (blur_sigma, offset, old_opacity, new_opacity) = match animation {
+        LyricTransitionAnimation::Blur => (
+            LYRIC_TRANSITION_BLUR_SIGMA,
+            LYRIC_TRANSITION_OFFSET,
+            1.0 - transition,
+            transition,
+        ),
+        LyricTransitionAnimation::Slide => {
+            (0.0, LYRIC_TRANSITION_OFFSET, 1.0 - transition, transition)
+        }
+        LyricTransitionAnimation::Fade => (
+            0.0,
+            0.0,
+            1.0 - lyric_transition_progress(params.lyric_transition * 2.0),
+            lyric_transition_progress(params.lyric_transition * 2.0 - 1.0),
+        ),
+    };
+    if old_opacity > 0.0 && !params.old_lyric.is_empty() {
+        let (color, blur) = lyric_style(
+            params.text_color,
+            scaled_alpha(alpha, old_opacity),
+            transition.powi(2) * blur_sigma * params.global_scale,
+        );
+        draw_lyric_pair(LyricPairParams {
+            painter: params.painter,
+            primary: params.old_lyric,
+            secondary: params.old_secondary_lyric,
+            primary_anchor_x: layout.primary_anchor_x,
+            secondary_center_x: layout.secondary_center_x,
+            center_y: layout.center_y - offset * params.global_scale * transition,
+            size: layout.size,
+            primary_centered: layout.primary_centered,
+            color,
+            blur,
+            highlight: None,
+        });
+    }
+    if new_opacity <= 0.0 || params.current_lyric.is_empty() {
+        return;
+    }
+    let (color, blur) = lyric_style(
+        params.text_color,
+        scaled_alpha(alpha, new_opacity),
+        (1.0 - transition).powi(2) * blur_sigma * params.global_scale,
+    );
+    draw_lyric_pair(LyricPairParams {
+        painter: params.painter,
+        primary: params.current_lyric,
+        secondary: params.current_secondary_lyric,
+        primary_anchor_x: layout.primary_anchor_x,
+        secondary_center_x: layout.secondary_center_x,
+        center_y: layout.center_y + offset * params.global_scale * (1.0 - transition),
+        size: layout.size,
+        primary_centered: layout.primary_centered,
+        color,
+        blur,
+        highlight: params.lyric_highlight,
+    });
+}
+
+fn lyric_transition_progress(progress: f32) -> f32 {
+    let progress = progress.clamp(0.0, 1.0);
+    progress * progress * (3.0 - 2.0 * progress)
+}
+
+fn lyric_style(color: Rgba, alpha: u8, blur_sigma: f32) -> (Rgba, Option<BlurSpec>) {
+    let color = Rgba::from_argb(alpha, color.r(), color.g(), color.b());
+    let blur = (blur_sigma > MIN_BLUR_SIGMA).then_some(BlurSpec {
+        sigma: (blur_sigma * LYRIC_TRANSITION_BLUR_X_SCALE, blur_sigma),
+        tile: None,
+    });
+    (color, blur)
+}
+
+/// Horizontal position of one line of plugin text.
+/// Plugin content is centred in the compact island, matching the default
+/// alignment of the built-in compact widgets. A line wider than the island keeps
+/// the left inset so its leading characters stay readable.
+fn plugin_text_x(text: &str, size: f32, bold: bool, text_x: f32, text_width: f32) -> f32 {
+    let style = if bold {
+        winisland_render::FontStyle::bold()
+    } else {
+        winisland_render::FontStyle::normal()
+    };
+    let measured = FontManager::global().measure_text_cached(text, size, style);
+    text_x + ((text_width - measured) * 0.5).max(0.0)
+}
+
+fn draw_plugin_content(
+    params: &MiniContentParams<'_>,
+    context: &winisland_core::context::PluginContext,
+    alpha: u8,
+) {
+    let font_size = if params.font_size > 0.0 {
+        params.font_size * PLUGIN_FONT_SCALE * params.global_scale
+    } else {
+        DEFAULT_PLUGIN_FONT_SIZE * params.global_scale
+    };
+    let text_x = params.offset_x + PLUGIN_HORIZONTAL_INSET * params.global_scale;
+    let text_width = params.current_w - PLUGIN_HORIZONTAL_INSET * 2.0 * params.global_scale;
+    let text_y =
+        params.stable_offset_y + params.base_h / 2.0 - font_size * PLUGIN_PRIMARY_BASELINE_OFFSET;
+    let text = if context.compact_text.is_empty() {
+        &context.title
+    } else {
+        &context.compact_text
+    };
+    let (color, blur) = lyric_style(params.text_color, alpha, 0.0);
+
+    params.painter.save();
+    params.painter.clip_rect(Rect::from_xywh(
+        text_x,
+        params.stable_offset_y,
+        text_width,
+        params.base_h,
+    ));
+    draw_text_cached(DrawTextCachedParams {
+        painter: params.painter,
+        text,
+        x: plugin_text_x(text, font_size, true, text_x, text_width),
+        y: text_y,
+        size: font_size,
+        bold: true,
+        color,
+        blur,
+    });
+    if !context.body.is_empty() {
+        let (secondary_color, secondary_blur) = lyric_style(
+            params.text_color,
+            scaled_alpha(alpha, PLUGIN_SECONDARY_ALPHA),
+            0.0,
+        );
+        draw_text_cached(DrawTextCachedParams {
+            painter: params.painter,
+            text: &context.body,
+            x: plugin_text_x(
+                &context.body,
+                font_size * PLUGIN_SECONDARY_FONT_SCALE,
+                false,
+                text_x,
+                text_width,
+            ),
+            y: text_y + font_size * PLUGIN_SECONDARY_LINE_SPACING,
+            size: font_size * PLUGIN_SECONDARY_FONT_SCALE,
+            bold: false,
+            color: secondary_color,
+            blur: secondary_blur,
+        });
+    }
+    params.painter.restore();
+}
+
+fn scaled_alpha(alpha: u8, factor: f32) -> u8 {
+    (f32::from(alpha) * factor.clamp(0.0, 1.0)) as u8
+}
+
+struct LyricPairParams<'a> {
+    painter: Painter<'a>,
+    primary: &'a str,
+    secondary: &'a str,
+    primary_anchor_x: f32,
+    secondary_center_x: f32,
+    center_y: f32,
+    size: f32,
+    primary_centered: bool,
+    color: Rgba,
+    blur: Option<BlurSpec>,
+    highlight: Option<LyricHighlight>,
+}
+
+fn draw_lyric_pair(params: LyricPairParams<'_>) {
+    let LyricPairParams {
+        painter,
+        primary,
+        secondary,
+        primary_anchor_x,
+        secondary_center_x,
+        center_y,
+        size,
+        primary_centered,
+        color,
+        blur,
+        highlight,
+    } = params;
+    let has_pair = !primary.is_empty() && !secondary.is_empty();
+    let secondary_size = size * SECONDARY_LYRIC_SCALE;
+    let gap = size * LYRIC_PAIR_GAP_SCALE;
+    let stack_height = size + secondary_size + gap;
+    let primary_y = if has_pair {
+        center_y - stack_height / 2.0 + size * 0.8
+    } else {
+        center_y + size / 3.0
+    };
+    let secondary_y = if has_pair {
+        center_y + stack_height / 2.0 - secondary_size * 0.2
+    } else {
+        center_y + secondary_size / 3.0
+    };
+    let text_x = |text: &str, text_size: f32, anchor_x: f32, centered: bool| {
+        if centered {
+            let width = FontManager::global().measure_text_cached(
+                text,
+                text_size,
+                winisland_render::FontStyle::normal(),
+            );
+            anchor_x - width / 2.0
+        } else {
+            anchor_x
+        }
+    };
+
+    if !primary.is_empty() {
+        draw_highlighted_lyric(
+            painter,
+            primary,
+            text_x(primary, size, primary_anchor_x, primary_centered),
+            primary_y,
+            size,
+            color,
+            blur,
+            highlight,
+        );
+    }
+    if !secondary.is_empty() {
+        let secondary_color = Rgba::from_argb(
+            color.a(),
+            SECONDARY_LYRIC_CHANNEL,
+            SECONDARY_LYRIC_CHANNEL,
+            SECONDARY_LYRIC_CHANNEL,
+        );
+        draw_text_cached(DrawTextCachedParams {
+            painter,
+            text: secondary,
+            x: text_x(secondary, secondary_size, secondary_center_x, true),
+            y: secondary_y,
+            size: secondary_size,
+            bold: false,
+            color: secondary_color,
+            blur,
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_highlighted_lyric(
+    painter: Painter<'_>,
+    text: &str,
+    x: f32,
+    y: f32,
+    size: f32,
+    active_color: Rgba,
+    blur: Option<BlurSpec>,
+    highlight: Option<LyricHighlight>,
+) {
+    let draw = |color: Rgba| {
+        draw_text_cached(DrawTextCachedParams {
+            painter,
+            text,
+            x,
+            y,
+            size,
+            bold: false,
+            color,
+            blur,
+        });
+    };
+    let Some(highlight) = highlight.filter(|highlight| {
+        highlight.start_byte <= highlight.end_byte
+            && highlight.end_byte <= text.len()
+            && text.is_char_boundary(highlight.start_byte)
+            && text.is_char_boundary(highlight.end_byte)
+    }) else {
+        draw(active_color);
+        return;
+    };
+
+    draw(Rgba::from_argb(
+        active_color.a(),
+        PENDING_LYRIC_CHANNEL,
+        PENDING_LYRIC_CHANNEL,
+        PENDING_LYRIC_CHANNEL,
+    ));
+
+    let font_manager = FontManager::global();
+    let style = winisland_render::FontStyle::normal();
+    let (completed_width, active_width) = font_manager.measure_text_prefixes_cached(
+        text,
+        highlight.start_byte,
+        highlight.end_byte,
+        size,
+        style,
+    );
+    let draw_layer = |color: Rgba, clip_left: f32, clip_right: f32| {
+        if clip_right <= clip_left {
+            return;
+        }
+        painter.save();
+        painter.clip_rect(Rect::from_ltrb(
+            clip_left,
+            y - size * 1.5,
+            clip_right,
+            y + size * 0.5,
+        ));
+        draw(color);
+        painter.restore();
+    };
+    draw_layer(active_color, x, x + completed_width);
+
+    let progress = highlight.progress.clamp(0.0, 1.0);
+    let current_width = (active_width - completed_width) * progress;
+    draw_layer(
+        active_color,
+        x + completed_width,
+        x + completed_width + current_width,
+    );
+}

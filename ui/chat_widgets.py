@@ -7,10 +7,13 @@ _TypingBubble, _CommandResult, and helper functions.
 from __future__ import annotations
 import os
 import re
+import math
+import time
+from datetime import datetime
 
-from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, Signal, QRectF
+from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, Signal, QRectF, QTimer
 from PySide6.QtGui import (
-    QColor, QPainter, QPixmap, QBrush, QPolygon, QPainterPath,
+    QColor, QPainter, QPen, QPixmap, QBrush, QPolygon, QPainterPath,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
@@ -38,6 +41,18 @@ def _html_escape(text: str) -> str:
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+def _display_message_time(value: str) -> str:
+    text = str(value)
+    try:
+        timestamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if timestamp.tzinfo is not None:
+            timestamp = timestamp.astimezone()
+        pattern = "%H:%M" if timestamp.date() == datetime.now().date() else "%m-%d %H:%M"
+        return timestamp.strftime(pattern)
+    except ValueError:
+        return text if re.fullmatch(r"\d{2}:\d{2}", text) else ""
+
 
 def _strip_command_tags(text: str) -> str:
     """Remove [APP:...], [SHELL:...], [CMD:...], [CLAUDE:...] tags for display."""
@@ -89,11 +104,7 @@ class ChatBaseWindow(QWidget):
         p.end()
 
     def _apply_rounded_mask(self):
-        from PySide6.QtGui import QPainterPath, QRegion, QTransform
-        w, h = self.width(), self.height()
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(0.0, 0.0, float(w), float(h)), RADIUS_LG, RADIUS_LG)
-        self.setMask(QRegion(path.toFillPolygon(QTransform()).toPolygon()))
+        self.clearMask()
 
     def hide(self):
         if not self.isVisible():
@@ -125,7 +136,7 @@ class ChatBaseWindow(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ChatInput(QPlainTextEdit):
-    MAX_LINES = 4
+    MAX_LINES = 6
     LINE_H = 22
     send_signal = Signal()
 
@@ -139,7 +150,7 @@ class ChatInput(QPlainTextEdit):
                 color: {TEXT_PRIMARY};
                 border: none;
                 padding: 0;
-                font-size: 13px;
+                font-size: 14px;
                 font-family: {FONT_FAMILY};
                 selection-background-color: {ACCENT_SOFT};
             }}
@@ -148,15 +159,27 @@ class ChatInput(QPlainTextEdit):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFixedHeight(self.LINE_H + 8)
         self.textChanged.connect(self._auto_h)
+        self.document().documentLayout().documentSizeChanged.connect(self._auto_h)
 
-    def _auto_h(self):
+    def _auto_h(self, *_):
         if self._busy:
             return
         self._busy = True
-        lines = max(1, self.document().blockCount())
-        h = min(lines, self.MAX_LINES) * self.LINE_H + 8
-        self.setFixedHeight(h)
-        self._busy = False
+        try:
+            block = self.document().firstBlock()
+            lines = 0
+            while block.isValid():
+                lines += max(1, block.layout().lineCount())
+                block = block.next()
+            self.setFixedHeight(min(max(1, lines), self.MAX_LINES) * self.LINE_H + 8)
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded
+                if lines > self.MAX_LINES else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        finally:
+            self._busy = False
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._auto_h()
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Return and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
@@ -178,38 +201,38 @@ def _make_triangle_icon(size: int = 34) -> QPixmap:
     p = QPainter(px)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QBrush(QColor(WHITE)))
+    p.setBrush(QBrush(QColor(TEXT_ON_ACCENT)))
     p.drawPolygon(QPolygon([QPoint(12, 9), QPoint(12, 25), QPoint(24, 17)]))
     p.end()
     return px
 
 
-_AVATAR_CACHE: dict[int, QPixmap | None] = {}
+_AVATAR_CACHE: dict[tuple[int, str, float], QPixmap | None] = {}
 
 
-def _load_cat_avatar(size: int = 24) -> QPixmap | None:
-    """Try to load the orange cat sprite for AI avatar. Cached after first call."""
-    if size in _AVATAR_CACHE:
-        return _AVATAR_CACHE[size]
-    if not os.path.exists(_AVATAR_PATH):
-        _AVATAR_CACHE[size] = None
-        return None
-    pm = QPixmap(_AVATAR_PATH)
+def _load_cat_avatar(size: int = 24, thinking: bool = False, pet_id: str = "orange", ratio: float | None = None) -> QPixmap | None:
+    from pet_library import resolve_pet
+    screen = QApplication.primaryScreen()
+    if ratio is None:
+        ratio = screen.devicePixelRatio() if screen else 1.0
+    path = resolve_pet(pet_id)["thinking" if thinking else "idle"]
+    if not os.path.isfile(path):
+        path = _AVATAR_PATH
+    key = (size, path, ratio)
+    if key in _AVATAR_CACHE:
+        return _AVATAR_CACHE[key]
+    pm = QPixmap(path)
     if pm.isNull():
-        _AVATAR_CACHE[size] = None
         return None
-    result = pm.scaled(
-        size, size,
-        Qt.AspectRatioMode.KeepAspectRatio,
-        Qt.TransformationMode.SmoothTransformation,
-    )
-    _AVATAR_CACHE[size] = result
+    result = pm.scaled(round(size * ratio), round(size * ratio),
+                       Qt.AspectRatioMode.KeepAspectRatio,
+                       Qt.TransformationMode.SmoothTransformation)
+    result.setDevicePixelRatio(ratio)
+    if len(_AVATAR_CACHE) >= 64:
+        _AVATAR_CACHE.pop(next(iter(_AVATAR_CACHE)))
+    _AVATAR_CACHE[key] = result
     return result
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Message bubble widgets
-# ─────────────────────────────────────────────────────────────────────────────
 
 class _MessageBubble(QFrame):
     """A single message row: avatar + bubble + cmd tag + time + hover actions.
@@ -234,33 +257,6 @@ class _MessageBubble(QFrame):
             outer.setAlignment(Qt.AlignmentFlag.AlignRight)
             outer.addStretch()
 
-        # Avatar (24x24) — orange cat sprite for AI, person glyph for user
-        avatar = QLabel()
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setFixedSize(24, 24)
-        if role == "ai":
-            cat_pm = _load_cat_avatar(24)
-            if cat_pm is not None:
-                avatar.setPixmap(cat_pm)
-                avatar.setStyleSheet(
-                    f"border-radius:12px;border:1px solid {BORDER};"
-                    f"background:{ACCENT_SOFT};"
-                )
-            else:
-                avatar.setText("🐱")
-                avatar.setStyleSheet(
-                    f"background:{ACCENT_SOFT};border:1px solid {BORDER};"
-                    f"border-radius:12px;font-size:12px;color:{TEXT_PRIMARY};"
-                )
-        else:
-            avatar.setText("👤")
-            avatar.setStyleSheet(
-                f"background:{GOLD_SOFT};border:1px solid rgba(184,166,106,0.15);"
-                f"border-radius:12px;font-size:12px;color:{TEXT_PRIMARY};"
-            )
-        if role == "user":
-            outer.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
-
         # Content column (bubble + cmd + time + hover actions)
         content = QVBoxLayout()
         content.setSpacing(2)
@@ -278,31 +274,22 @@ class _MessageBubble(QFrame):
         self._bubble.setOpenExternalLinks(True)
         if role == "ai":
             self._bubble.setStyleSheet(
-                f"background:{BG_CARD};color:{TEXT_PRIMARY};"
-                f"border:1px solid {BORDER};"
-                f"border-top-left-radius:{RADIUS_MD}px;"
-                f"border-top-right-radius:{RADIUS_MD}px;"
-                f"border-bottom-right-radius:{RADIUS_MD}px;"
-                f"border-bottom-left-radius:6px;"
-                f"padding:10px 14px;font-size:13px;line-height:1.6;"
+                f"background:transparent;color:{TEXT_PRIMARY};border:none;"
+                f"padding:4px 0;font-size:14px;line-height:1.6;"
             )
         else:
             self._bubble.setStyleSheet(
-                f"background:{ACCENT};color:{WHITE};"
-                f"border-top-left-radius:{RADIUS_MD}px;"
-                f"border-top-right-radius:{RADIUS_MD}px;"
-                f"border-bottom-right-radius:6px;"
-                f"border-bottom-left-radius:{RADIUS_MD}px;"
-                f"padding:10px 14px;font-size:13px;line-height:1.6;"
+                f"background:{BG_SUBTLE};color:{TEXT_PRIMARY};border:none;"
+                f"border-radius:12px;padding:10px 14px;font-size:14px;line-height:1.6;"
             )
-        self._bubble.setMaximumWidth(420)
+        self._bubble.setMaximumWidth(500)
         self._bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self.set_text(text)  # sets initial HTML
         content.addWidget(self._bubble)
 
         # Cmd tag (under bubble)
         if cmd:
-            cmd_lbl = QLabel(f"⚡ {_html_escape(cmd)}")
+            cmd_lbl = QLabel(f"命令 · {_html_escape(cmd)}")
             cmd_lbl.setStyleSheet(
                 f"background:{GREEN_SOFT};color:{GREEN};"
                 f"border-radius:4px;padding:2px 8px;"
@@ -316,11 +303,17 @@ class _MessageBubble(QFrame):
         # Time + hover actions row
         time_row = QHBoxLayout()
         time_row.setSpacing(4)
-        time_lbl = QLabel(time_str)
+        time_lbl = QLabel(_display_message_time(time_str))
+        time_lbl.setToolTip(str(time_str))
         time_lbl.setStyleSheet(
             f"color:{TEXT_META};font-size:10px;"
             f"font-family:{FONT_MONO};background:transparent;border:none;"
         )
+        self._time_label = time_lbl
+        policy = time_lbl.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        time_lbl.setSizePolicy(policy)
+        time_lbl.hide()
         time_row.addWidget(time_lbl)
 
         if role == "ai":
@@ -337,6 +330,9 @@ class _MessageBubble(QFrame):
                 """)
                 btn.clicked.connect(callback)
                 time_row.addWidget(btn)
+                policy = btn.sizePolicy()
+                policy.setRetainSizeWhenHidden(True)
+                btn.setSizePolicy(policy)
                 self._hover_actions.append(btn)
             for btn in self._hover_actions:
                 btn.hide()
@@ -344,12 +340,9 @@ class _MessageBubble(QFrame):
         time_row.addStretch()
         content.addLayout(time_row)
 
-        outer.addLayout(content, 0)
-        if role == "ai":
-            outer.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
-            outer.addStretch()
+        outer.addLayout(content, 1 if role == "ai" else 0)
 
-        self.setMaximumWidth(500)
+        self.setMaximumWidth(560)
 
     def set_text(self, text: str, streaming: bool = False):
         """Update bubble text. AI bubbles use MarkdownRenderer."""
@@ -588,81 +581,121 @@ class _MessageBubble(QFrame):
             w._regenerate()
 
     def enterEvent(self, _e):
+        self._time_label.show()
         for btn in self._hover_actions:
             btn.show()
 
     def leaveEvent(self, _e):
+        self._time_label.hide()
         for btn in self._hover_actions:
             btn.hide()
 
 
-class _TypingBubble(QFrame):
-    """3-dot typing indicator used while waiting for the AI."""
+class SidebarButton(QPushButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(28, 30)
+        self.setCheckable(True)
+        self.setAccessibleName("展开或收起会话侧栏")
+        self.setToolTip("会话侧栏")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("QPushButton {border:none;background:transparent;padding:0;}")
 
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(TEXT_SECONDARY), 1.4))
+        painter.setBrush(QColor(BG_SUBTLE) if self.underMouse() or self.isChecked() else Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(QRectF(5, 7, 18, 16), 4, 4)
+        painter.drawLine(11, 8, 11, 22)
+        painter.end()
+
+
+class ThinkingSpinner(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(28, 28)
+        self._started = time.monotonic()
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self.update)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._timer.start()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.translate(14, 14)
+        painter.rotate((time.monotonic() - self._started) * 80)
+        for index in range(8):
+            color = QColor(ACCENT)
+            color.setAlpha(70 + index * 23)
+            painter.setPen(QPen(color, 2.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawLine(5, 0, 9, 0)
+            painter.rotate(45)
+        painter.end()
+
+
+class _TypingBubble(QFrame):
     def __init__(self):
         super().__init__()
+        self._started = time.monotonic()
+        self._progress = ""
         self.setStyleSheet("background:transparent;border:none;")
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(10)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setSpacing(10)
+        layout.addWidget(ThinkingSpinner())
+        self._label = QLabel()
+        self._label.setStyleSheet(f"color:{TEXT_SECONDARY};font-size:13px;background:transparent;")
+        layout.addWidget(self._label)
+        layout.addStretch()
+        self._timer = QTimer(self)
+        self._timer.setInterval(250)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start()
+        self._refresh()
 
-        avatar = QLabel("🐱")
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setFixedSize(24, 24)
-        avatar.setStyleSheet(
-            f"background:{ACCENT_SOFT};border:1px solid {BORDER};"
-            f"border-radius:12px;font-size:12px;"
-        )
-        outer.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
+    def set_progress(self, label):
+        self._progress = label if label in {"正在准备", "正在思考", "正在生成回答", "正在使用工具", "正在连接"} else ""
+        self._refresh()
 
-        bubble = QLabel()
-        bubble.setStyleSheet(
-            f"background:{BG_CARD};color:{TEXT_MUTED};"
-            f"border:1px solid {BORDER};"
-            f"border-top-left-radius:{RADIUS_MD}px;"
-            f"border-top-right-radius:{RADIUS_MD}px;"
-            f"border-bottom-right-radius:{RADIUS_MD}px;"
-            f"border-bottom-left-radius:6px;"
-            f"padding:12px 16px;"
-        )
-        bubble.setTextFormat(Qt.TextFormat.RichText)
-        bubble.setText(
-            '<span style="display:inline-block;width:6px;height:6px;'
-            f'background:{TEXT_MUTED};border-radius:3px;margin-right:5px;"></span>'
-            '<span style="display:inline-block;width:6px;height:6px;'
-            f'background:{TEXT_MUTED};border-radius:3px;margin-right:5px;"></span>'
-            '<span style="display:inline-block;width:6px;height:6px;'
-            f'background:{TEXT_MUTED};border-radius:3px;"></span>'
-        )
-        outer.addWidget(bubble)
-        outer.addStretch()
+    def _refresh(self):
+        seconds = int(time.monotonic() - self._started)
+        label = self._progress or ("思考中" if (seconds // 5) % 2 == 0 else "正在琢磨")
+        self._label.setText(f"{label} · {seconds} 秒")
 
 
 class _CommandResult(QFrame):
-    """A small pill showing a successfully/failed command result."""
-
-    def __init__(self, cmd: str, ok: bool):
+    def __init__(self, cmd: str, ok: bool, output: str = ""):
         super().__init__()
         self.setStyleSheet("background:transparent;border:none;")
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(10)
-        outer.addStretch()
-
-        bg = GREEN_SOFT if ok else "rgba(212,122,114,0.08)"
-        fg = GREEN if ok else RED
-        icon = "✓" if ok else "✗"
-        pill = QLabel(f"{icon} {_html_escape(cmd)}")
-        pill.setStyleSheet(
-            f"background:{bg};color:{fg};"
-            f"border-radius:4px;padding:3px 10px;"
-            f"font-family:{FONT_MONO};font-size:11px;font-weight:600;"
-        )
-        outer.addWidget(pill)
-        outer.addStretch()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ChatWindow
-# ─────────────────────────────────────────────────────────────────────────────
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 4)
+        message = output.strip() or ("操作已完成" if ok else "操作没有完成，请检查设置后重试。")
+        summary = QLabel(message[:240])
+        summary.setTextFormat(Qt.TextFormat.PlainText)
+        summary.setWordWrap(True)
+        summary.setStyleSheet(f"color:{TEXT_MUTED if ok else RED};font-size:12px;background:transparent;")
+        layout.addWidget(summary)
+        if cmd or len(message) > 240:
+            details = QPushButton("查看详情")
+            details.setFixedHeight(24)
+            details.setStyleSheet(f"text-align:left;padding:0;color:{TEXT_MUTED};background:transparent;border:none;font-size:11px;")
+            details.setCheckable(True)
+            body = QLabel(f"{cmd}\n{message}")
+            body.setTextFormat(Qt.TextFormat.PlainText)
+            body.setWordWrap(True)
+            body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            body.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;background:transparent;")
+            body.hide()
+            details.toggled.connect(body.setVisible)
+            layout.addWidget(details)
+            layout.addWidget(body)
 

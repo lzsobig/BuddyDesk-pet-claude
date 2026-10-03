@@ -8,6 +8,7 @@ import os
 import io
 import logging
 import threading
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ if sys.stderr and hasattr(sys.stderr, 'buffer'):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt, QTimer, QObject, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QTimer, QObject, Signal, QLockFile
+from PySide6.QtGui import QIcon, QFont
 
 from config import load_user_config
 from bridge import AIBridge
@@ -84,7 +85,11 @@ class BuddyDeskApp:
     def __init__(self):
         # 复用已存在的 QApplication（如有），避免双实例错误
         self.app = QApplication.instance() or QApplication(sys.argv)
-        self.app.setQuitOnLastWindowClosed(True)  # close chat → quit app
+        self._winisland_mode = "--winisland" in sys.argv
+        self._show_chat_on_start = "--show-chat" in sys.argv
+        self._background_mode = "--background" in sys.argv or not self._show_chat_on_start
+        self.app.setQuitOnLastWindowClosed(False)
+        self._instance_lock = None
 
         # Set app icon (taskbar + Alt-Tab)
         _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -93,6 +98,9 @@ class BuddyDeskApp:
             self.app.setWindowIcon(QIcon(_icon_path))
 
         from theme import get_stylesheet
+        ui_font = QFont("Microsoft YaHei UI")
+        ui_font.setPixelSize(14)
+        self.app.setFont(ui_font)
         self.app.setStyleSheet(get_stylesheet())
 
         self.bridge = None
@@ -101,8 +109,11 @@ class BuddyDeskApp:
         self.island = None
         self.pet = None
         self.tray = None
+        self.winisland = None
+        self._settings_dialog = None
         self.pin_manager = None  # P2-3
         self.voice_input = None  # P3-6
+        self.agent = None
         self._keyboard_registered = False
         self._user_config: dict = {}
         self._clipboard_last: str = ""
@@ -111,17 +122,35 @@ class BuddyDeskApp:
 
     def run(self):
         """Run the application."""
-        # Step 1: Show launcher
-        launcher = LauncherDialog()
-        scr = self.app.primaryScreen().availableGeometry()
-        launcher.move(
-            scr.x() + (scr.width() - launcher.width()) // 2,
-            scr.y() + (scr.height() - launcher.height()) // 2,
-        )
-        if launcher.exec() != LauncherDialog.DialogCode.Accepted:
+        from winisland_bridge import request_existing_chat, _write_atomic
+        from pathlib import Path
+        from uuid import uuid4
+        import time
+        if request_existing_chat(open_chat=self._show_chat_on_start):
             return
-
-        self._user_config = launcher.result_config
+        os.makedirs(cfg.CONFIG_DIR, exist_ok=True)
+        self._instance_lock = QLockFile(os.path.join(cfg.CONFIG_DIR, "agent-instance.lock"))
+        self._instance_lock.setStaleLockTime(0)
+        if not self._instance_lock.tryLock(0):
+            if self._show_chat_on_start:
+                _write_atomic(Path(cfg.CONFIG_DIR) / "winisland", "commands.json", {
+                    "protocol_version": 1, "id": uuid4().hex,
+                    "issued_at_ms": int(time.time() * 1000), "action": "open_chat"})
+            return
+        self.app.aboutToQuit.connect(self._instance_lock.unlock)
+        saved = load_user_config()
+        if self._background_mode or self._has_saved_backend(saved):
+            self._user_config = saved
+        else:
+            launcher = LauncherDialog()
+            scr = self.app.primaryScreen().availableGeometry()
+            launcher.move(
+                scr.x() + (scr.width() - launcher.width()) // 2,
+                scr.y() + (scr.height() - launcher.height()) // 2,
+            )
+            if launcher.exec() != LauncherDialog.DialogCode.Accepted:
+                return
+            self._user_config = launcher.result_config
 
         # Step 2: Create bridge (AI + EventEngine)
         self.bridge = AIBridge(self._user_config)
@@ -129,35 +158,15 @@ class BuddyDeskApp:
             self.bridge.event_engine,
             user_config=self._user_config,
         )
-
         # Step 3: Initialize UI components
-        if self._user_config.get("chat_enabled", True):
-            self.chat = ChatWindow(self.bridge)
-            self.chat._main_app = self  # expose BuddyDeskApp to chat
-            self.bridge.stream_done.connect(self._process_commands)
-            self.bridge.command_needs_confirm.connect(self._on_confirm_command)
-            self.chat.settings_requested.connect(self._open_settings)
-            # P2-3: Pin 桌面卡
-            self.pin_manager = PinManager()
-            self.pin_manager.restore_all(on_jump=self._on_pin_jump)
+        if self._show_chat_on_start or self._user_config.get("chat_enabled", True):
+            self._ensure_chat()
 
-        if self._user_config.get("island_enabled", True):
+        if not self._winisland_mode and self._user_config.get("island_enabled", True):
             self.island = DynamicIsland(on_click=self._toggle_chat)
             self.island.show()
 
-        if self._user_config.get("pet_enabled", True):
-            self.pet = PixelPet(on_double_click=self._toggle_chat)
-            self.pet.pet_name = self._user_config.get("pet_name", "小橘")
-            self.pet.name_label.setText(self.pet.pet_name)
-            # P2-2: 桌宠吞文件 → 转发给 chat window
-            self.pet.file_dropped.connect(self._on_pet_file_dropped)
-            # P3-1: 注入 island provider（桌宠避让用）
-            if self.island:
-                self.pet.island_provider = lambda: self.island.get_geometry()
-            # P3-5: 桌宠嗅桌面图标 → AI 短评
-            self.pet.sniff_requested.connect(self._on_pet_sniff)
-            self.pet.show()
-            self.pet.say(f"Hi! 我是{self.pet.pet_name}~", 5000)
+        self._apply_pet_settings(self._user_config)
 
         # Step 4: System tray
         self.tray = SystemTray(
@@ -176,7 +185,7 @@ class BuddyDeskApp:
         self._voice_bridge.state_changed.connect(self._on_voice_state_main)
         try:
             from voice_input import VoiceInputController
-            self.voice_input = VoiceInputController()
+            self.voice_input = VoiceInputController(settings=self._user_config)
             self.voice_input.set_callbacks(
                 on_recognized=self._emit_voice_recognized,
                 on_state=self._emit_voice_state,
@@ -197,6 +206,10 @@ class BuddyDeskApp:
 
         # Step 6: Connect state changes to island, tray, pet, and sound
         self.bridge.state_changed.connect(self._on_state_change)
+        from winisland_bridge import WinIslandBridge
+        self.winisland = WinIslandBridge(self)
+        from agent_controller import AgentController
+        self.agent = AgentController(self)
 
         # Step 7: Clipboard monitoring (optional)
         self._clipboard_monitor = self._user_config.get("clipboard_monitor", False)
@@ -210,8 +223,7 @@ class BuddyDeskApp:
         # P1-4: Crash check on startup
         QTimer.singleShot(5000, self._check_crashes)
 
-        # Show chat by default
-        if self.chat:
+        if self.chat and self._show_chat_on_start:
             scr = self.app.primaryScreen().availableGeometry()
             self.chat.move(
                 scr.x() + (scr.width() - self.chat.width()) // 2,
@@ -229,24 +241,70 @@ class BuddyDeskApp:
 
         self.app.exec()
 
+    def _has_saved_backend(self, saved):
+        if not os.path.isfile(cfg.CONFIG_PATH):
+            return False
+        if saved.get("backend") == cfg.BACKEND_OPENAI:
+            try:
+                endpoint = urlparse(str(saved.get("openai_api_base", "")))
+            except ValueError:
+                return False
+            if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+                return False
+            local = endpoint.hostname in {"localhost", "127.0.0.1", "::1"}
+            return bool(saved.get("openai_model")) and (local or bool(saved.get("openai_api_key")))
+        if saved.get("backend") == cfg.BACKEND_CLAUDE:
+            from ai.backend import _find_claude_cli
+            cli = str(saved.get("claude_cli_path", cfg.CLAUDE_CLI_PATH))
+            endpoint = saved.get("anthropic_api_base") or os.environ.get("ANTHROPIC_BASE_URL")
+            token = saved.get("anthropic_api_key") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+            return bool(_find_claude_cli(cli)) or bool(endpoint and token)
+        return False
+
     # ── Settings ────────────────────────────────────────────────────
-    def _open_settings(self):
+    def _open_settings(self, page=0):
         """Open the settings panel dialog."""
         if not self.bridge:
             return
-        dlg = SettingsPanel(self._user_config, parent=self.chat)
+        if self._settings_dialog is not None:
+            self._settings_dialog._select_settings_page(page)
+            self._settings_dialog.raise_()
+            self._settings_dialog.activateWindow()
+            return
+        dlg = SettingsPanel(self._user_config, parent=self.chat if self.chat and self.chat.isVisible() else None)
+        self._settings_dialog = dlg
+        dlg._select_settings_page(page)
         dlg.saved.connect(self._on_settings_saved)
-        dlg.exec()
+        try:
+            dlg.exec()
+        finally:
+            self._settings_dialog = None
 
     def _on_settings_saved(self, new_config: dict):
         """Apply new config from settings panel."""
+        backend_keys = ("backend", "openai_api_key", "openai_api_base", "openai_model",
+                        "anthropic_api_key", "anthropic_api_base", "claude_cli_path",
+                        "claude_model", "working_dir")
+        backend_changed = any(self._user_config.get(key) != new_config.get(key) for key in backend_keys)
+        if backend_changed and self.chat:
+            self.chat._stop_generation()
         self._user_config = new_config
-        self.bridge.update_config(new_config)
+        if self.voice_input:
+            self.voice_input.update_settings(new_config)
+        if self.agent:
+            self.agent.update_settings(new_config)
+        if backend_changed:
+            self.bridge.update_config(new_config)
+        else:
+            self.bridge.user_config = new_config
+        if self.chat:
+            self.chat._pet_title.setText(str(new_config.get("pet_name", "小橘")))
 
-        # Update pet name
-        if self.pet:
-            self.pet.pet_name = new_config.get("pet_name", "小橘")
-            self.pet.name_label.setText(self.pet.pet_name)
+        self._apply_pet_settings(new_config)
+        if self.chat:
+            self.chat._on_state("thinking" if self.chat._streaming else "idle")
+        if self.winisland:
+            self.winisland.refresh_pet()
 
         # Update clipboard monitoring
         self._clipboard_monitor = new_config.get("clipboard_monitor", False)
@@ -258,6 +316,38 @@ class BuddyDeskApp:
             self.bridge.event_engine,
             user_config=self._user_config,
         )
+        if self.agent:
+            from agent_tools import create_registry
+            self.agent.tools = create_registry(self.agent.store, self.agent.context, self.command_engine)
+
+    def _apply_pet_settings(self, settings):
+        enabled = bool(settings.get("pet_enabled", True))
+        if enabled and self.pet is None:
+            self.pet = PixelPet(on_double_click=self._show_chat, settings=settings)
+            self.pet.file_dropped.connect(self._on_pet_file_dropped)
+            self.pet.sniff_requested.connect(self._on_pet_sniff)
+            self.pet.position_changed.connect(self._save_pet_position)
+            self.pet.settings_requested.connect(lambda: self._open_settings(3))
+            self.pet.hide_requested.connect(self._hide_desktop_pet)
+            if self.island:
+                self.pet.island_provider = lambda: self.island.get_geometry()
+        if self.pet:
+            self.pet.apply_settings(settings)
+            if self.chat and self.chat._streaming:
+                self.pet.set_state("think")
+            if enabled and not self.pet.isVisible():
+                self.pet.show()
+            elif not enabled:
+                self.pet.hide()
+
+    def _save_pet_position(self, x, y, screen):
+        self._user_config["pet_position"] = {"x": x, "y": y, "screen": screen}
+        cfg.save_user_config(self._user_config)
+
+    def _hide_desktop_pet(self):
+        self._user_config["pet_enabled"] = False
+        self._apply_pet_settings(self._user_config)
+        cfg.save_user_config(self._user_config)
 
     # ── Command confirmation ────────────────────────────────────────
     def _on_confirm_command(self, command: str):
@@ -292,21 +382,52 @@ class BuddyDeskApp:
     def _on_command_finished(self, command: str, success: bool, output: str):
         if self.chat:
             self.chat.append_command_result(command, success, output)
+        if self.agent:
+            self.agent.tool_finished(success)
 
     # ── State changes ───────────────────────────────────────────────
+    def _ensure_chat(self):
+        if self.chat is not None:
+            return
+        self.chat = ChatWindow(self.bridge)
+        self.chat._main_app = self
+        self.bridge.stream_done.connect(self._process_commands)
+        self.bridge.command_needs_confirm.connect(self._on_confirm_command)
+        self.chat.settings_requested.connect(self._open_settings)
+        self.pin_manager = PinManager()
+        self.pin_manager.restore_all(on_jump=self._on_pin_jump)
+        if self.agent:
+            self.bridge.state_changed.disconnect(self.chat._on_state)
+            self.chat._on_state(self.agent.state.state, self.agent.state.label)
+
     def _toggle_chat(self):
+        self._ensure_chat()
         if self.chat:
             self.chat.toggle_visibility()
             if self.tray:
                 self.tray.set_chat_visible(self.chat.isVisible())
-            if self.chat.isVisible() and self.pet:
+            if self.chat.isVisible() and self.pet and not self.agent:
                 self.pet.set_state("happy")
                 self.pet.say("来聊天啦~", 2000)
+
+    def _show_chat(self):
+        self._ensure_chat()
+        if self.chat:
+            self.chat.showNormal()
+            self.chat.show()
+            self.chat.raise_()
+            self.chat.activateWindow()
+            self.chat._input.setFocus()
+            if self.tray:
+                self.tray.set_chat_visible(True)
 
     # ── P2-2 pet ate files ─────────────────────────────────────────
     def _on_pet_file_dropped(self, paths: list):
         """桌宠吞下文件后转发给 chat window。"""
         if not paths:
+            return
+        if self.agent:
+            self.agent.files_dropped(paths)
             return
         if self.chat and hasattr(self.chat, "_on_dropped_files"):
             self.chat._on_dropped_files(paths)
@@ -341,6 +462,11 @@ class BuddyDeskApp:
             self._toggle_chat()
 
     def _on_state_change(self, state, preview=""):
+        if self.agent:
+            self.agent.chat_state(state, preview)
+            return
+        if self.winisland:
+            self.winisland.update_state(state, preview)
         if self.island:
             self.island.set_state(state, preview)
         if self.tray:
@@ -359,10 +485,16 @@ class BuddyDeskApp:
                 self.pet.say("出错了...", 3000)
                 audio.play("error", config_dict=self._user_config)
             elif state == "result":
+                self.pet.set_state("happy")
                 audio.play("message_received", config_dict=self._user_config)
+            elif state == "idle":
+                self.pet.set_state("idle")
 
     def _process_commands(self, full_text):
         """Parse AI response for command tags and execute them."""
+        if self.agent:
+            self.agent.process_commands(full_text)
+            return
         if not self.command_engine:
             return
 
@@ -421,8 +553,8 @@ class BuddyDeskApp:
                 )
             if self.chat:
                 self.chat._sys(
-                    f"⚠️ 启动时发现 **{n} 个新崩溃日志**。\n"
-                    f"打开「设置 → 关于 / 崩溃上报」可一键复制并上报。"
+                    f"检测到 **{n} 份未查看的异常日志**。\n"
+                    f"可在「设置 → 偏好 → 高级设置 → 诊断」查看。"
                 )
         except (OSError, ValueError) as exc:
             logger.debug("Failed to check crash logs: %s", exc)
@@ -466,6 +598,8 @@ class BuddyDeskApp:
 
     # ── P3-6 voice input ───────────────────────────────────────────
     def _on_voice_press(self):
+        if self.agent and (self.agent.voice.recording or self.agent.voice.processing):
+            return
         logger.debug("_on_voice_press called")
         if not self.voice_input:
             logger.debug("voice_input is None")
@@ -563,6 +697,8 @@ class BuddyDeskApp:
         """录音/处理/就绪 状态通知。在主线程执行。"""
         logger.debug("state_main: %s", state)
         if state in ("error", "ready"):
+            if state == "error" and self.voice_input:
+                self._voice_msg(self.voice_input.last_error or "语音识别失败，请检查设置 → 语音")
             if self.chat and hasattr(self.chat, "_voice_btn"):
                 self.chat._voice_btn.set_recording(False)
                 self.chat._voice_btn.setToolTip("语音输入（Ctrl+Shift+V）")
@@ -581,6 +717,10 @@ class BuddyDeskApp:
 
     def _quit(self):
         """Clean up hotkey, tray, and app, then exit."""
+        if self.agent:
+            self.agent.close()
+        if self.winisland:
+            self.winisland.close()
         if hasattr(self, "_hotkey_timer"):
             self._hotkey_timer.stop()
         self._keyboard_registered = False

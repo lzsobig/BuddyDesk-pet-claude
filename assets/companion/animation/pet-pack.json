@@ -1,0 +1,114 @@
+{
+  "format": "buddydesk-pet-v1",
+  "name": "小橘",
+  "states": {
+    "idle": {
+      "frames": [
+        "idle/00.png",
+        "idle/01.png",
+        "idle/02.png",
+        "idle/03.png",
+        "idle/04.png",
+        "idle/05.png"
+      ],
+      "durations": [
+        1600,
+        120,
+        160,
+        120,
+        180,
+        1000
+      ]
+    },
+    "thinking": {
+      "frames": [
+        "thinking/00.png",
+        "thinking/01.png",
+        "thinking/02.png",
+        "thinking/03.png",
+        "thinking/04.png",
+        "thinking/05.png"
+      ],
+      "durations": [
+        260,
+        180,
+        260,
+        240,
+        260,
+        260
+      ]
+    },
+    "sleep": {
+      "frames": [
+        "sleep/00.png",
+        "sleep/01.png",
+        "sleep/02.png",
+        "sleep/03.png",
+        "sleep/04.png",
+        "sleep/05.png"
+      ],
+      "durations": [
+        450,
+        450,
+        450,
+        450,
+        450,
+        450
+      ]
+    },
+    "petting": {
+      "frames": [
+        "petting/00.png",
+        "petting/01.png",
+        "petting/02.png",
+        "petting/03.png",
+        "petting/04.png",
+        "petting/05.png"
+      ],
+      "durations": [
+        180,
+        180,
+        220,
+        180,
+        180,
+        220
+      ]
+    },
+    "drag": {
+      "frames": [
+        "drag/00.png",
+        "drag/01.png",
+        "drag/02.png",
+        "drag/03.png",
+        "drag/04.png",
+        "drag/05.png"
+      ],
+      "durations": [
+        180,
+        180,
+        180,
+        180,
+        180,
+        180
+      ]
+    },
+    "walk": {
+      "frames": [
+        "walk/00.png",
+        "walk/01.png",
+        "walk/02.png",
+        "walk/03.png",
+        "walk/04.png",
+        "walk/05.png"
+      ],
+      "durations": [
+        100,
+        100,
+        100,
+        100,
+        100,
+        100
+      ]
+    }
+  }
+}

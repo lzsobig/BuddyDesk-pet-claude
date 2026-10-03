@@ -1,0 +1,110 @@
+name: Bug Report
+description: Create a bug report
+title: "[Bug] "
+labels: ["bug", "pending"]
+assignees: []
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem description
+      description: Please describe the problem in detail
+      placeholder: Describe the problem here
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Describe how to reproduce the issue
+      placeholder: Describe the steps to reproduce here
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: "Optional: describe what you expected to happen"
+      placeholder: Describe the expected behavior here
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe what actually happens
+      placeholder: Describe the actual behavior here
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Environment
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Windows version
+      description: Select the Windows version where the issue occurs
+      options:
+        - Windows 11
+        - Windows 10
+        - Other Windows version
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Software version
+      description: nightly
+      placeholder: nightly
+    validations:
+      required: true
+
+  - type: textarea
+    id: other-env
+    attributes:
+      label: Other environment information
+      description: Provide any other relevant environment information
+      placeholder: Other environment information
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots (if any)
+      description: Paste a log upload link or attach screenshots
+      placeholder: Paste a log upload link or attach screenshots here
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: check-list
+    attributes:
+      label: Checklist
+      description: Check all inspections according to the checklist below.
+      options:
+        - label: "I'm running the official release build (GitHub Releases), not a fork or third-party build"
+          required: false
+        - label: "I confirm that I'm running the latest version, whether stable or nightly"
+          required: false
+        - label: "I confirm that I have provided my Windows version and build number (e.g. Windows 11 23H2, build 22631)"
+          required: false
+        - label: "I confirm that I have provided GPU/driver information if the issue is rendering-related"
+          required: false
+        - label: "I confirm that I have included relevant logs or error messages"
+          required: false
+        - label: "I confirm that I have included a screenshot or screen recording if the issue is visual or UI-related"
+          required: false
+        - label: "I confirm that I have searched for existing issues and this is not a duplicate"
+          required: false
+        - label: "I confirm that I have not read these checkboxes and therefore I just ticked them all."
+          required: false
+        - label: "I am well aware that if the issue is not filled out correctly and completely, it will simply be closed without any response or reason."
+          required: false

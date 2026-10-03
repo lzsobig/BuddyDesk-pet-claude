@@ -31,11 +31,13 @@ _DEFAULT_TOKENS_PATH = os.path.join(_MODEL_DIR, "tokens.json")
 # 缓存 session（懒加载）
 _session = None
 _tokens: Optional[list] = None
+_session_path = None
+_tokens_path = None
 
 
 def _get_session(model_path: str = _DEFAULT_MODEL_PATH):
-    global _session
-    if _session is None:
+    global _session, _session_path
+    if _session is None or _session_path != model_path:
         import onnxruntime as ort
         if not os.path.isfile(model_path):
             raise FileNotFoundError(
@@ -47,14 +49,16 @@ def _get_session(model_path: str = _DEFAULT_MODEL_PATH):
             providers=["CPUExecutionProvider"],
         )
         _session = sess
+        _session_path = model_path
     return _session
 
 
 def _get_tokens(tokens_path: str = _DEFAULT_TOKENS_PATH) -> list:
-    global _tokens
-    if _tokens is None:
+    global _tokens, _tokens_path
+    if _tokens is None or _tokens_path != tokens_path:
         with open(tokens_path, "r", encoding="utf-8") as f:
             _tokens = json.load(f)
+        _tokens_path = tokens_path
     return _tokens
 
 
@@ -138,7 +142,7 @@ _ITN_WITHOUT = 0
 
 # ── 公开接口 ────────────────────────────────────────────────────
 def transcribe(audio: np.ndarray, sample_rate: int = 16000,
-               language: str = "zh", use_itn: bool = True) -> str:
+               language: str = "zh", use_itn: bool = True, model_dir: str | None = None) -> str:
     """把一段音频转成文字。
 
     Args:
@@ -164,7 +168,12 @@ def transcribe(audio: np.ndarray, sample_rate: int = 16000,
     textnorm_id = _ITN_WITH if use_itn else _ITN_WITHOUT
 
     # 3. 推理
-    sess = _get_session()
+    from voice_services import active_model_dir, find_model_dir
+    from pathlib import Path
+    directory = active_model_dir(Path(model_dir)) if model_dir else find_model_dir()
+    if directory is None:
+        raise FileNotFoundError("请在设置 → 语音中安装本地模型")
+    sess = _get_session(str(directory / "model.onnx"))
     speech = lfr[np.newaxis, :, :]  # (1, T, 560)
     speech_lengths = np.array([lfr.shape[0]], dtype=np.int32)
     language_in = np.array([lang_id], dtype=np.int32)
@@ -182,7 +191,7 @@ def transcribe(audio: np.ndarray, sample_rate: int = 16000,
     logits = outputs[0][0]  # (T', 25055)
 
     # 4. 解码
-    tokens = _get_tokens()
+    tokens = _get_tokens(str(directory / "tokens.json"))
     text = _greedy_decode(logits, tokens)
     return text.strip()
 
@@ -199,4 +208,5 @@ def transcribe_wav_file(path: str, **kwargs) -> str:
 
 def is_model_available() -> bool:
     """检查本地模型是否就绪。"""
-    return os.path.isfile(_DEFAULT_MODEL_PATH) and os.path.isfile(_DEFAULT_TOKENS_PATH)
+    from voice_services import find_model_dir
+    return find_model_dir() is not None

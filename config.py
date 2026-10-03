@@ -120,6 +120,10 @@ DEFAULT_USER_CONFIG: dict[str, Any] = {
     "pet_name": "小橘",
     "island_enabled": True,
     "pet_enabled": True,
+    "pet_id": "orange",
+    "pet_island_enabled": True,
+    "pet_roam": False,
+    "pet_position": None,
     "chat_enabled": True,
     # 5 事件音独立开关
     "sound_enabled": True,
@@ -139,6 +143,11 @@ DEFAULT_USER_CONFIG: dict[str, Any] = {
     # 杂项开关
     "clipboard_monitor": False,
     "autostart": False,
+    "voice_mode": "local",
+    "voice_model_dir": "",
+    "voice_api_base": "https://api.openai.com/v1",
+    "voice_api_key": "",
+    "voice_api_model": "whisper-1",
 }
 
 
@@ -167,7 +176,7 @@ def _decode_secret(val: str) -> str:
 
 
 # Keys whose values are secrets and should be obfuscated in the config file.
-_SECRET_KEYS = {"openai_api_key", "anthropic_api_key"}
+_SECRET_KEYS = {"openai_api_key", "anthropic_api_key", "voice_api_key"}
 
 
 def _restrict_file_permissions(path: str) -> None:

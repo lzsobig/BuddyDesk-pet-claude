@@ -1,0 +1,1467 @@
+use crate::platform::{MonitorRef, WindowRef, window};
+use crate::plugin::inventory::InstalledPlugin;
+use crate::utils::color::{SettingsTheme, dark_settings_theme, light_settings_theme};
+use crate::utils::settings_ui::items::{POPUP_MENU_R, SIDEBAR_PAD, SettingsItem};
+use crate::utils::settings_ui::{
+    SwitchAnimator, WidgetDropAnimation, WidgetEditorHover, WidgetEditorMode, WidgetEditorSlot,
+    WidgetSource,
+};
+use pollkit::Job;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+use winisland_core::anim::AnimPool;
+use winisland_core::config::{AppConfig, AppConfigField};
+use winisland_core::plugin_settings::PluginSettingsPage;
+use winisland_core::widgets::PluginWidget;
+use winisland_platform::{
+    CursorKind, InputState, Key, LogicalWindowSize, MouseButton, MouseWheelDelta, PlatformEvent,
+    SettingsSpec, Theme, TouchPhase, WindowId, WindowPoint, WindowPosition, WindowSize,
+};
+use winisland_plugin_host::host::PluginHost;
+use winisland_plugin_package::marketplace::{MarketplaceCatalog, MarketplacePlugin};
+use winisland_render::{Renderer, RendererTargetId};
+
+pub mod input;
+pub mod items;
+pub mod pages;
+mod popup;
+pub mod renderer;
+mod resource_editor;
+pub mod sidebar;
+
+pub(crate) use popup::PopupState;
+
+pub(crate) const WIN_W: f32 = 760.0;
+pub(crate) const WIN_H: f32 = 680.0;
+pub(crate) const SIDEBAR_W: f32 = 184.0;
+pub(crate) const SIDEBAR_ROW_H: f32 = 34.0;
+pub(crate) const SIDEBAR_ROW_GAP: f32 = 2.0;
+pub(crate) const SIDEBAR_START_Y: f32 = 64.0;
+pub(crate) const BUILTIN_SIDEBAR_PAGE_COUNT: usize = 5;
+pub(crate) const GENERAL_PAGE_INDEX: usize = 0;
+pub(crate) const WIDGETS_PAGE_INDEX: usize = 2;
+pub(crate) const PLUGINS_PAGE_INDEX: usize = 3;
+pub(crate) const PAGE_NAV_X: f32 = SIDEBAR_W + 18.0;
+pub(crate) const PAGE_NAV_Y: f32 = 18.0;
+pub(crate) const PAGE_NAV_WIDTH: f32 = 34.0;
+pub(crate) const PAGE_NAV_HEIGHT: f32 = 28.0;
+pub(crate) const PAGE_NAV_GAP: f32 = 2.0;
+pub(crate) const SETTINGS_HEADER_H: f32 = 64.0;
+pub(crate) const WINDOW_RADIUS: f32 = 16.0;
+pub(crate) const WINDOW_CONTROL_CENTERS: [(f32, f32); 3] =
+    [(20.0, 20.0), (40.0, 20.0), (60.0, 20.0)];
+pub(crate) const WINDOW_CONTROL_RADIUS: f32 = 6.0;
+const WINDOW_CONTROL_HIT_RADIUS: f32 = 8.0;
+const SCROLLBAR_BOTTOM_INSET: f32 = 8.0;
+const SCROLLBAR_RIGHT_INSET: f32 = 5.0;
+const SCROLLBAR_THUMB_MIN_H: f32 = 32.0;
+const SCROLLBAR_TRACK_TOP_INSET: f32 = 8.0;
+const SCROLLBAR_W: f32 = 4.0;
+const SCROLLBAR_HIT_W: f32 = 16.0;
+const CURSOR_MOVE_THRESHOLD: f32 = 0.5;
+const MOUSE_WHEEL_LINE_HEIGHT: f32 = 40.0;
+const SIDEBAR_TITLE_HEIGHT: f32 = 60.0;
+const POPUP_CLOSE_SPEED: f32 = 0.3;
+const WINDOW_CONTROL_CLOSE: usize = 0;
+const WINDOW_CONTROL_MINIMIZE: usize = 1;
+const WIDGET_HOVER_RATE: f32 = 18.0;
+const WIDGET_DRAG_LIFT_RATE: f32 = 22.0;
+const WIDGET_DROP_DURATION: f32 = 0.28;
+
+fn animate_towards(value: &mut f32, target: f32, rate: f32, dt: f32) -> bool {
+    let previous = *value;
+    *value += (target - *value) * (1.0 - (-rate * dt).exp());
+    if (target - *value).abs() < 0.001 {
+        *value = target;
+    }
+    (*value - previous).abs() > f32::EPSILON
+}
+
+pub(crate) fn window_control_at(x: f32, y: f32) -> Option<usize> {
+    WINDOW_CONTROL_CENTERS.iter().position(|&(cx, cy)| {
+        (x - cx).powi(2) + (y - cy).powi(2) <= WINDOW_CONTROL_HIT_RADIUS.powi(2)
+    })
+}
+
+pub(crate) fn window_controls_hovered(x: f32, y: f32) -> bool {
+    (10.0..=70.0).contains(&x) && (10.0..=30.0).contains(&y)
+}
+
+fn scroll_delta(delta: MouseWheelDelta) -> f32 {
+    match delta {
+        MouseWheelDelta::Lines { y, .. } => y * MOUSE_WHEEL_LINE_HEIGHT,
+        MouseWheelDelta::Pixels { y, .. } => y as f32,
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ScrollbarGeometry {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+    track_y: f32,
+    track_height: f32,
+}
+
+impl ScrollbarGeometry {
+    pub(crate) fn hit_test(&self, x: f32, y: f32) -> bool {
+        x >= self.x + self.width - SCROLLBAR_HIT_W
+            && x <= self.x + self.width + SCROLLBAR_RIGHT_INSET
+            && y >= self.y
+            && y <= self.y + self.height
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PageNavigation {
+    Back,
+    Forward,
+}
+
+pub(crate) const POPUP_OPACITY_KEY: u64 = 1;
+pub(crate) const SIDEBAR_KEY_BASE: u64 = 1_000;
+pub(crate) const PLUGIN_DETAIL_KEY: u64 = 2_000;
+
+pub(crate) fn widget_drag_move_needs_redraw<T: PartialEq>(
+    dragging: bool,
+    current_slot: Option<T>,
+    new_slot: Option<T>,
+) -> bool {
+    dragging || current_slot != new_slot
+}
+
+pub(crate) fn settings_frame_should_continue(
+    has_anim: bool,
+    has_popup: bool,
+    is_scrolling: bool,
+    is_widget_dragging: bool,
+    is_number_input_active: bool,
+) -> bool {
+    has_anim || has_popup || is_scrolling || is_widget_dragging || is_number_input_active
+}
+
+pub(crate) type NumberInputHandler = fn(&mut SettingsApp, &str);
+
+pub(crate) struct PendingPluginSetting {
+    resource_id: u64,
+    key: String,
+    minimum: Option<f64>,
+    maximum: Option<f64>,
+}
+
+pub(crate) struct NumberInput {
+    pub(crate) rect: winisland_render::Rect,
+    pub(crate) text: String,
+    pub(crate) on_commit: NumberInputHandler,
+}
+
+pub(crate) enum PluginSettingsRequest {
+    HideIsland,
+    Exit,
+    Install(std::path::PathBuf),
+    LoadMarketplace,
+    InstallMarketplace(Box<MarketplacePlugin>),
+    SetEnabled { id: String, enabled: bool },
+    Uninstall { id: String },
+    Restart,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PluginPageTab {
+    Installed,
+    Marketplace,
+}
+
+pub(crate) enum MarketplaceViewState {
+    NotLoaded,
+    Loading,
+    Loaded(Vec<MarketplacePlugin>),
+    Failed(String),
+}
+
+pub struct SettingsApp {
+    pub(crate) window: Option<WindowRef>,
+    pub(crate) renderer_target: Option<RendererTargetId>,
+    pub(crate) config: AppConfig,
+    pub(crate) active_page: usize,
+    pub(crate) page_history: Vec<usize>,
+    pub(crate) page_history_index: usize,
+    pub(crate) switch_anim: SwitchAnimator,
+    pub(crate) switch_anim_context: (usize, usize),
+    pub(crate) anim: AnimPool,
+    pub(crate) logical_mouse_pos: (f32, f32),
+    pub(crate) last_hover_mouse_pos: (f32, f32),
+    touch_id: Option<u64>,
+    touch_start: WindowPoint,
+    touch_last: WindowPoint,
+    touch_scrolling: bool,
+    touch_pressed: bool,
+    last_touch_at: Option<Instant>,
+    pub(crate) frame_count: u64,
+    pub(crate) scroll_y: f32,
+    pub(crate) target_scroll_y: f32,
+    pub(crate) last_frame_time: Instant,
+    pub(crate) next_frame_deadline: Instant,
+    pub(crate) detected_apps: Vec<String>,
+    detected_apps_scan: Job<Vec<String>>,
+    pub(crate) sidebar_hover: i32,
+    pub(crate) popup: Option<PopupState>,
+    pub(crate) number_input: Option<NumberInput>,
+    pub(crate) is_light: bool,
+    pub(crate) cached_items: Vec<SettingsItem>,
+    pub(crate) items_dirty: bool,
+    pub(crate) cached_content_height: f32,
+    pub(crate) cached_max_scroll: f32,
+    pub(crate) win_w: f32,
+    pub(crate) win_h: f32,
+    logical_win_w: f64,
+    logical_win_h: f64,
+    pending_dpi_size: Option<WindowSize>,
+    target_monitor: Option<MonitorRef>,
+    pub(crate) focused: bool,
+    pub(crate) dots_hovered: bool,
+    pub(crate) music_notice_pressed: bool,
+    pub(crate) scroll_dragging: bool,
+    scroll_drag_offset: f32,
+    pub(crate) widget_dragging: Option<WidgetSource>,
+    pub(crate) widget_drag_hover_slot: Option<WidgetEditorSlot>,
+    pub(crate) widget_preview_hover_slot: Option<WidgetEditorSlot>,
+    pub(crate) widget_editor_mode: WidgetEditorMode,
+    pub(crate) compact_widget_dragging: Option<winisland_core::config::CompactWidgetKind>,
+    pub(crate) widget_hover_target: Option<WidgetEditorHover>,
+    pub(crate) widget_hover_visual: Option<WidgetEditorHover>,
+    pub(crate) widget_hover_progress: f32,
+    pub(crate) widget_drag_lift_progress: f32,
+    pub(crate) widget_drop_animation: Option<WidgetDropAnimation>,
+    pub(crate) resource_editor_open: bool,
+    pub(crate) plugin_widgets: Vec<PluginWidget>,
+    pub(crate) plugin_host: Option<Rc<PluginHost>>,
+    pub(crate) plugins: Vec<InstalledPlugin>,
+    plugin_inventory_scan: Job<Vec<InstalledPlugin>>,
+    pub(crate) plugin_page_tab: PluginPageTab,
+    pub(crate) marketplace_state: MarketplaceViewState,
+    pub(crate) marketplace_installing_id: Option<String>,
+    pub(crate) pending_plugin_uninstall_id: Option<String>,
+    pub(crate) selected_plugin_id: Option<String>,
+    pub(crate) plugin_detail_closing: bool,
+    pub(crate) plugin_detail_scroll: f32,
+    pub(crate) plugin_detail_max_scroll: f32,
+    pub(crate) plugin_status: Option<(String, bool)>,
+    pub(crate) plugin_settings_pages: Vec<PluginSettingsPage>,
+    pub(crate) plugin_settings_error: Option<(u64, String)>,
+    pub(crate) pending_plugin_setting: Option<PendingPluginSetting>,
+    pub(crate) pending_setting: Option<AppConfigField>,
+    plugin_request: Option<PluginSettingsRequest>,
+    close_requested: bool,
+}
+
+impl SettingsApp {
+    pub(crate) fn window_scale(&self) -> f32 {
+        self.window
+            .as_ref()
+            .map(|window| window.scale_factor() as f32)
+            .unwrap_or(1.0)
+    }
+
+    pub(crate) fn logical_window_size(&self) -> (f32, f32) {
+        let scale = self.window_scale();
+        (self.win_w / scale, self.win_h / scale)
+    }
+
+    pub(crate) fn content_width(&self) -> f32 {
+        self.logical_window_size().0 - SIDEBAR_W
+    }
+
+    pub(crate) fn sidebar_page_count(&self) -> usize {
+        BUILTIN_SIDEBAR_PAGE_COUNT + self.plugin_settings_pages.len()
+    }
+
+    pub(crate) fn active_plugin_settings_page(&self) -> Option<&PluginSettingsPage> {
+        self.active_page
+            .checked_sub(BUILTIN_SIDEBAR_PAGE_COUNT)
+            .and_then(|index| self.plugin_settings_pages.get(index))
+    }
+
+    pub(crate) fn page_title(&self) -> String {
+        match self.active_page {
+            0 => winisland_core::i18n::tr("tab_general"),
+            1 => winisland_core::i18n::tr("tab_music"),
+            2 => winisland_core::i18n::tr("tab_widgets"),
+            3 => winisland_core::i18n::tr("tab_plugins"),
+            4 => winisland_core::i18n::tr("tab_about"),
+            _ => self
+                .active_plugin_settings_page()
+                .map(|page| page.title.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn new(
+        config: AppConfig,
+        plugins: Vec<InstalledPlugin>,
+        plugin_widgets: Vec<PluginWidget>,
+        plugin_settings_pages: Vec<PluginSettingsPage>,
+    ) -> Self {
+        crate::ui::widget::resource_usage::set_configs(
+            &config.resource_metrics,
+            &config.compact_resource_metrics,
+        );
+        winisland_core::config::set_resource_widget_span(
+            config.resource_widget_columns,
+            config.resource_widget_rows,
+        );
+        let switch_anim = SwitchAnimator::new(&[]);
+        let detected_apps = config.smtc_known_apps.clone();
+        Self {
+            window: None,
+            renderer_target: None,
+            config,
+            active_page: GENERAL_PAGE_INDEX,
+            page_history: vec![0],
+            page_history_index: 0,
+            switch_anim,
+            switch_anim_context: (usize::MAX, usize::MAX),
+            anim: AnimPool::new(),
+            logical_mouse_pos: (0.0, 0.0),
+            last_hover_mouse_pos: (-1.0, -1.0),
+            touch_id: None,
+            touch_start: WindowPoint::new(0.0, 0.0),
+            touch_last: WindowPoint::new(0.0, 0.0),
+            touch_scrolling: false,
+            touch_pressed: false,
+            last_touch_at: None,
+            frame_count: 0,
+            scroll_y: 0.0,
+            target_scroll_y: 0.0,
+            last_frame_time: Instant::now(),
+            next_frame_deadline: Instant::now(),
+            detected_apps,
+            detected_apps_scan: Job::idle(),
+            sidebar_hover: -1,
+            popup: None,
+            number_input: None,
+            is_light: false,
+            cached_items: Vec::new(),
+            items_dirty: true,
+            cached_content_height: 0.0,
+            cached_max_scroll: 0.0,
+            win_w: WIN_W,
+            win_h: WIN_H,
+            logical_win_w: WIN_W as f64,
+            logical_win_h: WIN_H as f64,
+            pending_dpi_size: None,
+            target_monitor: None,
+            focused: true,
+            dots_hovered: false,
+            music_notice_pressed: false,
+            scroll_dragging: false,
+            scroll_drag_offset: 0.0,
+            widget_dragging: None,
+            widget_drag_hover_slot: None,
+            widget_preview_hover_slot: None,
+            widget_editor_mode: WidgetEditorMode::Expanded,
+            compact_widget_dragging: None,
+            widget_hover_target: None,
+            widget_hover_visual: None,
+            widget_hover_progress: 0.0,
+            widget_drag_lift_progress: 0.0,
+            widget_drop_animation: None,
+            resource_editor_open: false,
+            plugin_widgets,
+            plugin_host: None,
+            plugins,
+            plugin_inventory_scan: Job::idle(),
+            plugin_page_tab: PluginPageTab::Installed,
+            marketplace_state: MarketplaceViewState::NotLoaded,
+            marketplace_installing_id: None,
+            pending_plugin_uninstall_id: None,
+            selected_plugin_id: None,
+            plugin_detail_closing: false,
+            plugin_detail_scroll: 0.0,
+            plugin_detail_max_scroll: 0.0,
+            plugin_status: None,
+            plugin_settings_pages,
+            plugin_settings_error: None,
+            pending_plugin_setting: None,
+            pending_setting: None,
+            plugin_request: None,
+            close_requested: false,
+        }
+    }
+
+    pub(crate) fn theme(&self) -> SettingsTheme {
+        if self.is_light {
+            light_settings_theme()
+        } else {
+            dark_settings_theme()
+        }
+    }
+
+    pub(crate) fn update_theme(&mut self) {
+        self.is_light = match self.config.settings_theme.as_str() {
+            "light" => true,
+            "dark" => false,
+            _ => {
+                if let Some(win) = &self.window {
+                    window().theme(win.id()) == Some(Theme::Light)
+                } else {
+                    false
+                }
+            }
+        };
+        if let Some(win) = &self.window {
+            Self::apply_titlebar_theme(*win, self.is_light);
+            win.request_redraw();
+        }
+    }
+
+    pub(crate) fn apply_titlebar_theme(window_ref: WindowRef, is_light: bool) {
+        window().set_titlebar_theme(window_ref.id(), is_light);
+    }
+
+    pub(crate) fn get_monitor_list() -> Vec<String> {
+        use windows::Win32::Graphics::Gdi::{
+            DISPLAY_DEVICE_ACTIVE, DISPLAY_DEVICE_STATE_FLAGS, DISPLAY_DEVICEW, EnumDisplayDevicesW,
+        };
+        let mut monitors: Vec<String> = Vec::new();
+        unsafe {
+            let mut idx = 0u32;
+            let mut active_count = 0;
+            loop {
+                let mut dd: DISPLAY_DEVICEW = std::mem::zeroed();
+                dd.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+                if EnumDisplayDevicesW(None, idx, &mut dd, 0).as_bool() {
+                    if (dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != DISPLAY_DEVICE_STATE_FLAGS(0) {
+                        active_count += 1;
+                        let name = String::from_utf16_lossy(&dd.DeviceName)
+                            .trim_end_matches('\0')
+                            .to_string();
+                        let mut dm: DISPLAY_DEVICEW = std::mem::zeroed();
+                        dm.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+                        let mut label = if EnumDisplayDevicesW(
+                            windows::core::PCWSTR(dd.DeviceName.as_ptr()),
+                            0,
+                            &mut dm,
+                            0,
+                        )
+                        .as_bool()
+                        {
+                            let friendly = String::from_utf16_lossy(&dm.DeviceString)
+                                .trim_end_matches('\0')
+                                .to_string();
+                            if friendly.is_empty() {
+                                name.clone()
+                            } else {
+                                friendly
+                            }
+                        } else {
+                            name.clone()
+                        };
+                        label = format!("Display {active_count}: {label}");
+                        monitors.push(label);
+                    }
+                    idx += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        if monitors.is_empty() {
+            monitors.push("Primary".to_string());
+        }
+        monitors
+    }
+
+    pub(crate) fn update_detected_apps(&mut self) {
+        let mut changed = false;
+        for app in &self.config.smtc_known_apps {
+            if !self.detected_apps.contains(app) {
+                self.detected_apps.push(app.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            self.items_dirty = true;
+        }
+        if !self.detected_apps_scan.is_running() {
+            self.detected_apps_scan = crate::core::smtc::detect_active_apps_async();
+        }
+    }
+
+    fn poll_detected_apps(&mut self) {
+        let Some(apps) = self.detected_apps_scan.poll_ok() else {
+            return;
+        };
+        let mut changed = false;
+        for app in apps {
+            if !self.detected_apps.contains(&app) {
+                self.detected_apps.push(app);
+                changed = true;
+            }
+        }
+        if changed {
+            self.items_dirty = true;
+            self.request_redraw();
+        }
+    }
+
+    fn poll_plugin_inventory(&mut self) {
+        if let Some(plugins) = self.plugin_inventory_scan.poll_ok() {
+            self.set_plugins(plugins);
+        }
+    }
+}
+
+impl SettingsApp {
+    pub(crate) fn create_window(
+        &mut self,
+        renderer: &mut Renderer,
+        target_monitor: Option<MonitorRef>,
+    ) {
+        self.target_monitor = target_monitor;
+        let id = window()
+            .create_settings(SettingsSpec {
+                title: "WinIsland Settings",
+                logical_size: LogicalWindowSize::new(WIN_W as f64, WIN_H as f64),
+                monitor: self.target_monitor.as_ref().map(MonitorRef::id),
+            })
+            .expect("Settings window creation failed");
+        let window_ref = WindowRef(id);
+        self.window = Some(window_ref);
+        self.keep_window_on_island_monitor(true);
+        let size = window_ref.inner_size();
+        self.win_w = size.width as f32;
+        self.win_h = size.height as f32;
+        let scale = window_ref.scale_factor();
+        self.logical_win_w = size.width as f64 / scale;
+        self.logical_win_h = size.height as f64 / scale;
+        self.renderer_target = match window()
+            .native_surface(id)
+            .ok_or_else(|| "Settings window has no native surface".to_string())
+            .and_then(|surface| {
+                renderer
+                    .create_target(surface, size.width, size.height)
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(target) => Some(target),
+            Err(error) => {
+                log::error!("Settings renderer initialization failed: {error}");
+                self.close_requested = true;
+                return;
+            }
+        };
+        self.close_requested = false;
+        self.next_frame_deadline = Instant::now();
+        self.update_theme();
+        self.update_detected_apps();
+    }
+
+    pub(crate) fn invalidate_renderer_target(&mut self) {
+        self.renderer_target = None;
+        sidebar::clear_sidebar_icon_cache();
+        pages::plugins::clear_plugin_icon_cache();
+    }
+
+    pub(crate) fn recreate_renderer_target(
+        &mut self,
+        renderer: &mut Renderer,
+    ) -> Result<(), String> {
+        let Some(window) = self.window.as_ref() else {
+            return Ok(());
+        };
+        let size = window.inner_size();
+        let surface = crate::platform::window()
+            .native_surface(window.id())
+            .ok_or_else(|| "Settings window has no native surface".to_string())?;
+        self.renderer_target = Some(
+            renderer
+                .create_target(surface, size.width, size.height)
+                .map_err(|error| error.to_string())?,
+        );
+        window.request_redraw();
+        Ok(())
+    }
+
+    pub(crate) fn handle_window_event(&mut self, event: PlatformEvent, renderer: &mut Renderer) {
+        match event {
+            PlatformEvent::CloseRequested { .. } | PlatformEvent::Destroyed { .. } => {
+                self.close_requested = true;
+            }
+            PlatformEvent::Focused { focused, .. } => self.handle_focus_changed(focused),
+            PlatformEvent::ThemeChanged { theme, .. } if self.config.settings_theme == "system" => {
+                self.handle_system_theme_changed(theme);
+            }
+            PlatformEvent::Resized { .. }
+                if self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window.is_maximized()) =>
+            {
+                if let Some(window) = &self.window {
+                    window.set_maximized(false);
+                }
+            }
+            PlatformEvent::Resized { size, .. } => self.handle_resized(renderer, size),
+            PlatformEvent::ScaleFactorChanged { scale, .. } => self.handle_scale_changed(scale),
+            PlatformEvent::Moved { .. } => self.keep_window_on_island_monitor(false),
+            PlatformEvent::KeyInput {
+                key,
+                state: InputState::Pressed,
+                ..
+            } => {
+                self.handle_pressed_key(&key);
+            }
+            PlatformEvent::CursorMoved { position, .. } => self.handle_cursor_moved(position),
+            PlatformEvent::CursorLeft { .. } => self.handle_cursor_left(),
+            PlatformEvent::DroppedFile { path, .. }
+                if self.active_page == PLUGINS_PAGE_INDEX
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip")) =>
+            {
+                self.handle_plugin_file_drop(path);
+            }
+            PlatformEvent::MouseWheel { delta, .. } if !self.suppress_synthetic_mouse() => {
+                self.handle_mouse_wheel(delta);
+            }
+            PlatformEvent::MouseInput {
+                state: InputState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } if !self.suppress_synthetic_mouse() => self.handle_left_mouse_pressed(),
+            PlatformEvent::MouseInput {
+                state: InputState::Released,
+                button: MouseButton::Left,
+                ..
+            } if !self.suppress_synthetic_mouse() => self.handle_left_mouse_released(),
+            PlatformEvent::Touch {
+                touch_id,
+                phase,
+                position,
+                ..
+            } => self.handle_touch(touch_id, phase, position),
+            PlatformEvent::RedrawRequested { .. } => self.draw(renderer),
+            _ => (),
+        }
+    }
+
+    fn handle_focus_changed(&mut self, focused: bool) {
+        self.focused = focused;
+        if !focused {
+            self.commit_number_input();
+            self.dots_hovered = false;
+            self.scroll_dragging = false;
+        }
+        self.request_redraw();
+    }
+
+    fn handle_system_theme_changed(&mut self, theme: Theme) {
+        self.is_light = theme == Theme::Light;
+        if let Some(window) = &self.window {
+            Self::apply_titlebar_theme(*window, self.is_light);
+        }
+        self.request_redraw();
+    }
+
+    fn handle_resized(&mut self, renderer: &mut Renderer, size: WindowSize) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if window.is_minimized() == Some(true) || size.width == 0 || size.height == 0 {
+            return;
+        }
+        if let Some(expected) = self.pending_dpi_size.take() {
+            if expected.width.abs_diff(size.width) > 2 || expected.height.abs_diff(size.height) > 2
+            {
+                self.pending_dpi_size = Some(expected);
+                let _ = window.request_inner_size(expected);
+                return;
+            }
+        } else if size.width > 0 && size.height > 0 {
+            let scale = window.scale_factor();
+            self.logical_win_w = size.width as f64 / scale;
+            self.logical_win_h = size.height as f64 / scale;
+        }
+        self.win_w = size.width as f32;
+        self.win_h = size.height as f32;
+        self.mark_items_dirty();
+        self.resize_renderer_target(renderer, size);
+        self.keep_window_on_island_monitor(false);
+        self.request_redraw();
+    }
+
+    fn handle_scale_changed(&mut self, scale_factor: f64) {
+        let size = WindowSize::new(
+            (self.logical_win_w * scale_factor).round() as u32,
+            (self.logical_win_h * scale_factor).round() as u32,
+        );
+        if self
+            .window
+            .is_some_and(|window_ref| window_ref.request_inner_size(size))
+        {
+            self.pending_dpi_size = Some(size);
+        }
+    }
+
+    pub(crate) fn set_target_monitor(&mut self, monitor: MonitorRef) {
+        let changed = self.target_monitor.as_ref().is_none_or(|current| {
+            current.position() != monitor.position() || current.size() != monitor.size()
+        });
+        if changed {
+            self.target_monitor = Some(monitor);
+            self.keep_window_on_island_monitor(true);
+        }
+    }
+
+    fn keep_window_on_island_monitor(&self, center_if_outside: bool) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if window.is_minimized() == Some(true) {
+            return;
+        }
+        let Some(target) = self.target_monitor.as_ref() else {
+            return;
+        };
+        let Some(position) = window.outer_position() else {
+            return;
+        };
+        let Some(size) = window.outer_size() else {
+            return;
+        };
+        let work = target.0.work_area;
+        let max_x = (work.right - size.width as i32).max(work.left);
+        let max_y = (work.bottom - size.height as i32).max(work.top);
+        let outside = position.x < work.left
+            || position.x > max_x
+            || position.y < work.top
+            || position.y > max_y;
+        let (x, y) = if center_if_outside && outside {
+            ((work.left + max_x) / 2, (work.top + max_y) / 2)
+        } else {
+            (
+                position.x.clamp(work.left, max_x),
+                position.y.clamp(work.top, max_y),
+            )
+        };
+        if position.x != x || position.y != y {
+            window.set_outer_position(WindowPosition::new(x, y));
+        }
+    }
+
+    fn resize_renderer_target(&mut self, renderer: &mut Renderer, size: WindowSize) {
+        let Some(target) = self.renderer_target else {
+            return;
+        };
+        if let Err(error) = renderer.resize(target, size.width, size.height) {
+            log::error!("Settings renderer resize failed: {error}");
+        }
+    }
+
+    fn handle_pressed_key(&mut self, key: &Key) {
+        if self.resource_editor_open {
+            if matches!(key, Key::Escape) {
+                if self.popup.take().is_some() {
+                    self.anim.set_with_speed(POPUP_OPACITY_KEY, 0.0, 0.3);
+                } else {
+                    self.resource_editor_open = false;
+                }
+                self.request_redraw();
+            }
+            return;
+        }
+        if self.handle_number_input_key(key) {
+            return;
+        }
+        match key {
+            Key::ArrowLeft => {
+                self.navigate_page_history(PageNavigation::Back);
+            }
+            Key::ArrowRight => {
+                self.navigate_page_history(PageNavigation::Forward);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_cursor_moved(&mut self, position: WindowPoint) {
+        let scale = self.window_scale();
+        let new_position = (position.x as f32 / scale, position.y as f32 / scale);
+        let mouse_moved = (new_position.0 - self.last_hover_mouse_pos.0).abs()
+            > CURSOR_MOVE_THRESHOLD
+            || (new_position.1 - self.last_hover_mouse_pos.1).abs() > CURSOR_MOVE_THRESHOLD;
+        self.logical_mouse_pos = new_position;
+        self.update_scroll_drag(new_position.1);
+
+        let mut redraw = (matches!(
+            self.active_page,
+            1 | WIDGETS_PAGE_INDEX | PLUGINS_PAGE_INDEX
+        ) || self.active_plugin_settings_page().is_some())
+            && mouse_moved;
+        let dots_hovered = self.focused && window_controls_hovered(new_position.0, new_position.1);
+        if dots_hovered != self.dots_hovered {
+            self.dots_hovered = dots_hovered;
+            redraw = true;
+        }
+        redraw |= self.update_widget_hover();
+        redraw |= self.update_popup_hover();
+        if mouse_moved {
+            self.last_hover_mouse_pos = new_position;
+            redraw |= self.update_sidebar_hover();
+        }
+        if redraw {
+            self.request_redraw();
+        }
+
+        let cursor = if self.get_hover_state() {
+            CursorKind::Pointer
+        } else {
+            CursorKind::Default
+        };
+        if let Some(window) = &self.window {
+            crate::platform::window().set_cursor(window.id(), cursor);
+        }
+    }
+
+    fn handle_touch(&mut self, touch_id: u64, phase: TouchPhase, location: WindowPoint) {
+        self.last_touch_at = Some(Instant::now());
+        match phase {
+            TouchPhase::Started if self.touch_id.is_none() => {
+                self.touch_id = Some(touch_id);
+                self.touch_start = location;
+                self.touch_last = location;
+                self.touch_scrolling = false;
+                self.touch_pressed = false;
+                self.handle_cursor_moved(location);
+                let (x, y) = self.logical_mouse_pos;
+                if self.begin_scroll_drag(x, y) {
+                    self.touch_pressed = true;
+                    self.request_redraw();
+                } else if self.active_page == WIDGETS_PAGE_INDEX
+                    && !self.resource_editor_open
+                    && self.handle_widget_drag_press()
+                {
+                    self.touch_pressed = true;
+                    self.widget_drag_lift_progress = 0.0;
+                    self.widget_drop_animation = None;
+                    self.set_widget_hover_target(None);
+                    self.request_redraw();
+                } else if self.music_notice_button_hovered()
+                    || window_control_at(x, y).is_some()
+                    || (self.is_window_drag_region(x, y) && self.popup.is_none())
+                {
+                    self.touch_pressed = true;
+                    self.handle_left_mouse_pressed();
+                }
+            }
+            TouchPhase::Moved if self.touch_id == Some(touch_id) => {
+                self.handle_cursor_moved(location);
+                if !self.touch_pressed {
+                    let scale = self.window_scale() as f64;
+                    let dx = location.x - self.touch_start.x;
+                    let dy = location.y - self.touch_start.y;
+                    if dx.hypot(dy) > 8.0 * scale {
+                        self.touch_scrolling = true;
+                    }
+                    if self.touch_scrolling
+                        && self.popup.is_none()
+                        && !self.resource_editor_open
+                        && self.logical_mouse_pos.0 >= SIDEBAR_W
+                        && self.logical_mouse_pos.1 >= SETTINGS_HEADER_H
+                    {
+                        let delta = (location.y - self.touch_last.y) as f32 / self.window_scale();
+                        if self.active_page == PLUGINS_PAGE_INDEX
+                            && self.plugin_detail_contains(self.logical_mouse_pos.0)
+                        {
+                            self.plugin_detail_scroll = (self.plugin_detail_scroll - delta)
+                                .clamp(0.0, self.plugin_detail_max_scroll);
+                        } else {
+                            self.ensure_items_cache();
+                            self.target_scroll_y =
+                                (self.target_scroll_y - delta).clamp(0.0, self.cached_max_scroll);
+                            self.scroll_y = self.target_scroll_y;
+                        }
+                        self.request_redraw();
+                    }
+                }
+                self.touch_last = location;
+            }
+            TouchPhase::Ended if self.touch_id == Some(touch_id) => {
+                self.handle_cursor_moved(location);
+                if self.touch_pressed {
+                    self.handle_left_mouse_released();
+                } else {
+                    let scale = self.window_scale() as f64;
+                    let dx = location.x - self.touch_start.x;
+                    let dy = location.y - self.touch_start.y;
+                    if !self.touch_scrolling && dx.hypot(dy) <= 8.0 * scale {
+                        self.handle_left_mouse_pressed();
+                        self.handle_left_mouse_released();
+                    }
+                }
+                self.touch_pressed = false;
+                self.touch_scrolling = false;
+                self.touch_id = None;
+            }
+            TouchPhase::Cancelled if self.touch_id == Some(touch_id) => {
+                self.music_notice_pressed = false;
+                self.scroll_dragging = false;
+                self.widget_dragging = None;
+                self.compact_widget_dragging = None;
+                self.widget_drag_hover_slot = None;
+                self.touch_pressed = false;
+                self.touch_scrolling = false;
+                self.touch_id = None;
+                self.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    fn suppress_synthetic_mouse(&self) -> bool {
+        self.touch_id.is_some()
+            || self
+                .last_touch_at
+                .is_some_and(|time| time.elapsed() < Duration::from_millis(250))
+    }
+
+    fn update_widget_hover(&mut self) -> bool {
+        if self.resource_editor_open {
+            return self.set_widget_hover_target(None);
+        }
+        if self.widget_drag_active() {
+            let hover_changed = self.set_widget_hover_target(None);
+            let new_slot = self.widget_preview_slot_at_mouse();
+            let current_slot = self.active_widget_drag_hover_slot();
+            if new_slot != current_slot {
+                self.set_active_widget_drag_hover_slot(new_slot);
+            }
+            return hover_changed || widget_drag_move_needs_redraw(true, current_slot, new_slot);
+        }
+        if self.active_page != WIDGETS_PAGE_INDEX {
+            return self.set_widget_hover_target(None);
+        }
+        let new_hover = self.widget_editor_hover_at_mouse();
+        let new_slot = self.widget_preview_slot_at_mouse();
+        let current_slot = self.active_widget_preview_hover_slot();
+        if new_slot != current_slot {
+            self.set_active_widget_preview_hover_slot(new_slot);
+        }
+        self.set_widget_hover_target(new_hover) || new_slot != current_slot
+    }
+
+    fn set_widget_hover_target(&mut self, target: Option<WidgetEditorHover>) -> bool {
+        if self.widget_hover_target == target {
+            return false;
+        }
+        self.widget_hover_target = target.clone();
+        if target.is_some() {
+            self.widget_hover_visual = target;
+            self.widget_hover_progress = 0.0;
+        }
+        true
+    }
+
+    fn update_popup_hover(&mut self) -> bool {
+        let Some(popup) = &mut self.popup else {
+            return false;
+        };
+        let (mouse_x, mouse_y) = self.logical_mouse_pos;
+        let hover_index = popup.hit_test_item(mouse_x, mouse_y);
+        if hover_index == popup.hover_idx {
+            return false;
+        }
+        popup.hover_idx = hover_index;
+        true
+    }
+
+    fn update_sidebar_hover(&mut self) -> bool {
+        let (mouse_x, mouse_y) = self.logical_mouse_pos;
+        let hover_index = (mouse_x < SIDEBAR_W).then(|| {
+            (0..self.sidebar_page_count()).find(|index| {
+                let row_y = SIDEBAR_START_Y + *index as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
+                (row_y..=row_y + SIDEBAR_ROW_H).contains(&mouse_y)
+                    && (SIDEBAR_PAD..=SIDEBAR_W - SIDEBAR_PAD).contains(&mouse_x)
+            })
+        });
+        let hover_index = hover_index.flatten();
+        let sidebar_hover = hover_index.map_or(-1, |index| index as i32);
+        if sidebar_hover == self.sidebar_hover {
+            return false;
+        }
+        self.sidebar_hover = sidebar_hover;
+        for index in 0..self.sidebar_page_count() {
+            self.anim.set(
+                SIDEBAR_KEY_BASE + index as u64,
+                if hover_index == Some(index) { 1.0 } else { 0.0 },
+            );
+        }
+        true
+    }
+
+    fn handle_cursor_left(&mut self) {
+        if self.active_page == 1 && self.show_music_notice() {
+            self.logical_mouse_pos = (-1.0, -1.0);
+            self.request_redraw();
+        }
+        let hover_changed = self.set_widget_hover_target(None);
+        let slot_changed = self.active_widget_preview_hover_slot().is_some();
+        self.set_active_widget_preview_hover_slot(None);
+        if self.dots_hovered || hover_changed || slot_changed {
+            self.dots_hovered = false;
+            self.request_redraw();
+        }
+    }
+
+    fn handle_plugin_file_drop(&mut self, path: std::path::PathBuf) {
+        self.plugin_status = Some((winisland_core::i18n::tr("plugin_installing"), false));
+        self.plugin_request = Some(PluginSettingsRequest::Install(path));
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+
+    fn handle_mouse_wheel(&mut self, delta: MouseWheelDelta) {
+        if self.resource_editor_open {
+            return;
+        }
+        if self.popup.is_some() {
+            self.popup = None;
+            self.pending_plugin_setting = None;
+            self.anim
+                .set_with_speed(POPUP_OPACITY_KEY, 0.0, POPUP_CLOSE_SPEED);
+            self.request_redraw();
+            return;
+        }
+        let delta = scroll_delta(delta);
+        let (mouse_x, _) = self.logical_mouse_pos;
+        if self.active_page == PLUGINS_PAGE_INDEX && self.plugin_detail_contains(mouse_x) {
+            self.plugin_detail_scroll =
+                (self.plugin_detail_scroll - delta).clamp(0.0, self.plugin_detail_max_scroll);
+            self.request_redraw();
+        } else if mouse_x >= SIDEBAR_W {
+            self.target_scroll_y =
+                (self.target_scroll_y - delta).clamp(0.0, self.cached_max_scroll);
+            self.scroll_y = self.target_scroll_y;
+            self.request_redraw();
+        }
+    }
+
+    fn handle_left_mouse_pressed(&mut self) {
+        let (mouse_x, mouse_y) = self.logical_mouse_pos;
+        if self.resource_editor_open {
+            self.handle_click();
+            return;
+        }
+        if self.begin_scroll_drag(mouse_x, mouse_y) {
+            self.request_redraw();
+            return;
+        }
+        match window_control_at(mouse_x, mouse_y) {
+            Some(WINDOW_CONTROL_CLOSE) => self.close_requested = true,
+            Some(WINDOW_CONTROL_MINIMIZE) => {
+                if let Some(window) = &self.window {
+                    window.set_minimized(true);
+                }
+            }
+            Some(_) => {}
+            None if self.is_window_drag_region(mouse_x, mouse_y) && self.popup.is_none() => {
+                if let Some(window) = &self.window {
+                    crate::platform::window().begin_drag(window.id());
+                }
+            }
+            None if self.handle_widget_drag_press() => {
+                self.widget_drag_lift_progress = 0.0;
+                self.widget_drop_animation = None;
+                self.set_widget_hover_target(None);
+                self.request_redraw();
+            }
+            None => self.handle_click(),
+        }
+    }
+
+    fn is_window_drag_region(&self, mouse_x: f32, mouse_y: f32) -> bool {
+        if self.resource_editor_open {
+            return false;
+        }
+        let in_sidebar_title = mouse_x < SIDEBAR_W && mouse_y < SIDEBAR_TITLE_HEIGHT;
+        let in_content_title = mouse_x >= SIDEBAR_W
+            && mouse_y < SETTINGS_HEADER_H
+            && Self::page_navigation_at(mouse_x, mouse_y).is_none()
+            && self.widget_mode_at(mouse_x, mouse_y).is_none();
+        in_sidebar_title || in_content_title
+    }
+
+    fn handle_left_mouse_released(&mut self) {
+        if std::mem::take(&mut self.music_notice_pressed) {
+            if self.music_notice_button_hovered() {
+                self.config.music_notice_acknowledged = true;
+                self.persist_settings_change();
+            } else {
+                self.request_redraw();
+            }
+            return;
+        }
+        let scroll_released = std::mem::take(&mut self.scroll_dragging);
+        if scroll_released || self.handle_widget_drag_release() {
+            self.request_redraw();
+        }
+    }
+
+    fn request_redraw(&self) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+
+    fn widget_interaction_animating(&self) -> bool {
+        let hover_target = f32::from(self.widget_hover_target.is_some());
+        let drag_target = f32::from(self.widget_drag_active());
+        (self.widget_hover_progress - hover_target).abs() > 0.001
+            || (self.widget_drag_lift_progress - drag_target).abs() > 0.001
+            || self.widget_drop_animation.is_some()
+    }
+
+    fn update_widget_interaction_animations(&mut self, dt: f32) -> bool {
+        let hover_target = f32::from(self.widget_hover_target.is_some());
+        let drag_target = f32::from(self.widget_drag_active());
+        let mut changed = animate_towards(
+            &mut self.widget_hover_progress,
+            hover_target,
+            WIDGET_HOVER_RATE,
+            dt,
+        );
+        changed |= animate_towards(
+            &mut self.widget_drag_lift_progress,
+            drag_target,
+            WIDGET_DRAG_LIFT_RATE,
+            dt,
+        );
+        if hover_target == 0.0 && self.widget_hover_progress == 0.0 {
+            self.widget_hover_visual = None;
+        }
+        if let Some(animation) = &mut self.widget_drop_animation {
+            animation.progress = (animation.progress + dt / WIDGET_DROP_DURATION).min(1.0);
+            changed = true;
+            if animation.progress >= 1.0 {
+                self.widget_drop_animation = None;
+            }
+        }
+        changed
+    }
+
+    pub(crate) fn update(&mut self) -> Option<Instant> {
+        let window = self.window.as_ref()?;
+        if window.is_minimized() == Some(true) {
+            return None;
+        }
+
+        self.frame_count += 1;
+        self.poll_detected_apps();
+        self.poll_plugin_inventory();
+        if self.frame_count.is_multiple_of(120) {
+            self.update_detected_apps();
+        }
+
+        let has_anim = self.switch_anim.is_animating()
+            || self.anim.is_animating()
+            || self.widget_interaction_animating();
+        let has_popup = self.popup.is_some();
+        let is_scrolling = (self.target_scroll_y - self.scroll_y).abs() > 0.1;
+        let is_widget_dragging = self.widget_drag_active();
+        let is_number_input_active = self.number_input.is_some();
+
+        if !settings_frame_should_continue(
+            has_anim,
+            has_popup,
+            is_scrolling,
+            is_widget_dragging,
+            is_number_input_active,
+        ) {
+            return None;
+        }
+
+        let now = Instant::now();
+        if now < self.next_frame_deadline {
+            return Some(self.next_frame_deadline);
+        }
+
+        let mut redraw = is_widget_dragging || is_number_input_active || self.switch_anim.tick();
+        if self.anim.tick() {
+            redraw = true;
+        }
+        if self.plugin_detail_closing && self.anim.get(PLUGIN_DETAIL_KEY) <= 0.005 {
+            self.plugin_detail_closing = false;
+            self.selected_plugin_id = None;
+            self.plugin_detail_scroll = 0.0;
+        }
+
+        self.ensure_items_cache();
+        let max_scroll = self.cached_max_scroll;
+        self.target_scroll_y = self.target_scroll_y.clamp(0.0, max_scroll);
+
+        let dt = now
+            .duration_since(self.last_frame_time)
+            .as_secs_f32()
+            .clamp(0.001, 0.05);
+        self.last_frame_time = now;
+        redraw |= self.update_widget_interaction_animations(dt);
+
+        if (self.scroll_y - self.target_scroll_y).abs() > f32::EPSILON {
+            self.scroll_y = self.target_scroll_y;
+            redraw = true;
+        }
+
+        if redraw {
+            self.request_redraw();
+            self.next_frame_deadline = now + Duration::from_millis(16);
+            Some(self.next_frame_deadline)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn scrollbar_geometry(&self) -> Option<ScrollbarGeometry> {
+        if self.cached_max_scroll <= 0.0 {
+            return None;
+        }
+        let (win_w, win_h) = self.logical_window_size();
+        let track_y = SETTINGS_HEADER_H + SCROLLBAR_TRACK_TOP_INSET;
+        let track_height = win_h - track_y - SCROLLBAR_BOTTOM_INSET;
+        let viewport_height = win_h - SETTINGS_HEADER_H;
+        if track_height <= 0.0 || viewport_height <= 0.0 {
+            return None;
+        }
+        let content_height = viewport_height + self.cached_max_scroll;
+        let height = (track_height * viewport_height / content_height)
+            .clamp(SCROLLBAR_THUMB_MIN_H.min(track_height), track_height);
+        let travel = track_height - height;
+        let y = track_y + self.scroll_y / self.cached_max_scroll * travel;
+        Some(ScrollbarGeometry {
+            x: win_w - SCROLLBAR_RIGHT_INSET - SCROLLBAR_W,
+            y,
+            width: SCROLLBAR_W,
+            height,
+            track_y,
+            track_height,
+        })
+    }
+
+    fn begin_scroll_drag(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
+        let Some(scrollbar) = self.scrollbar_geometry() else {
+            return false;
+        };
+        if !scrollbar.hit_test(mouse_x, mouse_y) {
+            return false;
+        }
+        self.scroll_dragging = true;
+        self.scroll_drag_offset = mouse_y - scrollbar.y;
+        true
+    }
+
+    fn update_scroll_drag(&mut self, mouse_y: f32) {
+        if !self.scroll_dragging {
+            return;
+        }
+        let Some(scrollbar) = self.scrollbar_geometry() else {
+            self.scroll_dragging = false;
+            return;
+        };
+        let travel = scrollbar.track_height - scrollbar.height;
+        if travel <= 0.0 {
+            return;
+        }
+        let thumb_y = (mouse_y - self.scroll_drag_offset)
+            .clamp(scrollbar.track_y, scrollbar.track_y + travel);
+        let scroll = (thumb_y - scrollbar.track_y) / travel * self.cached_max_scroll;
+        self.target_scroll_y = scroll;
+        self.scroll_y = scroll;
+        self.request_redraw();
+    }
+
+    pub(crate) fn window_id(&self) -> Option<WindowId> {
+        self.window.as_ref().map(|window| window.id())
+    }
+
+    pub(crate) fn bring_to_front(&self) {
+        if let Some(window) = &self.window {
+            window.set_minimized(false);
+            let _ = crate::platform::display().bring_foreign_window_to_front("WinIsland Settings");
+            window.request_redraw();
+        }
+    }
+
+    pub(crate) fn close_requested(&self) -> bool {
+        self.close_requested
+    }
+
+    pub(crate) fn close(&mut self) -> Option<RendererTargetId> {
+        self.commit_number_input();
+        self.popup = None;
+        self.widget_dragging = None;
+        self.compact_widget_dragging = None;
+        self.widget_hover_target = None;
+        self.widget_hover_visual = None;
+        self.widget_drop_animation = None;
+        sidebar::clear_sidebar_icon_cache();
+        sidebar::clear_plugin_settings_icon_cache();
+        pages::plugins::clear_plugin_icon_cache();
+        let renderer_target = self.renderer_target.take();
+        if let Some(window_ref) = self.window.take() {
+            window().destroy_window(window_ref.id());
+        }
+        renderer_target
+    }
+
+    pub(crate) fn take_plugin_request(&mut self) -> Option<PluginSettingsRequest> {
+        self.plugin_request.take()
+    }
+
+    pub(crate) fn set_plugins(&mut self, plugins: Vec<InstalledPlugin>) {
+        pages::plugins::clear_plugin_icon_cache();
+        self.plugins = plugins;
+        if self
+            .selected_plugin_id
+            .as_ref()
+            .is_some_and(|id| !self.plugins.iter().any(|plugin| &plugin.id == id))
+        {
+            self.selected_plugin_id = None;
+            self.pending_plugin_uninstall_id = None;
+            self.plugin_detail_closing = true;
+            self.anim.set_with_speed(PLUGIN_DETAIL_KEY, 0.0, 0.28);
+        }
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_plugin_inventory_scan(&mut self, scan: Job<Vec<InstalledPlugin>>) {
+        self.plugin_inventory_scan = scan;
+    }
+
+    pub(crate) fn set_plugin_widgets(&mut self, plugin_widgets: Vec<PluginWidget>) {
+        self.plugin_widgets = plugin_widgets;
+        let layout_changed = winisland_core::config::normalize_active_plugin_widget_layout(
+            &self.config.widget_layout,
+            &mut self.config.plugin_widget_layout,
+            &self.plugin_widgets,
+        );
+        if self.widget_dragging.as_ref().is_some_and(|source| {
+            matches!(source, WidgetSource::Plugin(id) if !self.plugin_widgets.iter().any(|widget| widget.layout_id().as_ref() == Some(id)))
+        }) {
+            self.widget_dragging = None;
+            self.widget_drag_hover_slot = None;
+        }
+        self.mark_items_dirty();
+        if layout_changed {
+            crate::core::persistence::save_config(&self.config);
+        }
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_plugin_host(&mut self, host: Option<Rc<PluginHost>>) {
+        self.plugin_host = host;
+    }
+
+    pub(crate) fn set_plugin_settings_pages(&mut self, pages: Vec<PluginSettingsPage>) {
+        let previous_active_page = self.active_page;
+        let icons_changed = self.plugin_settings_pages.len() != pages.len()
+            || self.plugin_settings_pages.iter().any(|current| {
+                pages
+                    .iter()
+                    .find(|page| page.resource_id == current.resource_id)
+                    .is_none_or(|page| page.icon != current.icon)
+            });
+        let structure_changed = self
+            .plugin_settings_pages
+            .iter()
+            .map(|page| page.resource_id)
+            .ne(pages.iter().map(|page| page.resource_id));
+        let active_resource = self
+            .active_plugin_settings_page()
+            .map(|page| page.resource_id);
+        self.plugin_settings_pages = pages;
+        if let Some(resource_id) = active_resource {
+            self.active_page = self
+                .plugin_settings_pages
+                .iter()
+                .position(|page| page.resource_id == resource_id)
+                .map_or(PLUGINS_PAGE_INDEX, |index| {
+                    BUILTIN_SIDEBAR_PAGE_COUNT + index
+                });
+        } else if self.active_page >= self.sidebar_page_count() {
+            self.active_page = PLUGINS_PAGE_INDEX;
+        }
+        if structure_changed {
+            self.page_history.clear();
+            self.page_history.push(self.active_page);
+            self.page_history_index = 0;
+        }
+        if self.active_page != previous_active_page {
+            self.scroll_y = 0.0;
+            self.target_scroll_y = 0.0;
+        }
+        let pending_is_current = self.pending_plugin_setting.as_ref().is_some_and(|pending| {
+            self.plugin_settings_pages
+                .iter()
+                .any(|page| page.resource_id == pending.resource_id)
+        });
+        if !pending_is_current {
+            if self.pending_plugin_setting.is_some() {
+                self.popup = None;
+                self.number_input = None;
+                self.anim
+                    .set_with_speed(POPUP_OPACITY_KEY, 0.0, POPUP_CLOSE_SPEED);
+            }
+            self.pending_plugin_setting = None;
+        }
+        let error_is_current =
+            self.plugin_settings_error
+                .as_ref()
+                .is_some_and(|(resource_id, _)| {
+                    self.plugin_settings_pages
+                        .iter()
+                        .any(|page| page.resource_id == *resource_id)
+                });
+        if !error_is_current {
+            self.plugin_settings_error = None;
+        }
+        if icons_changed {
+            sidebar::clear_plugin_settings_icon_cache();
+        }
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_plugin_status(&mut self, message: String, restart: bool) {
+        self.plugin_status = Some((message, restart));
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_marketplace_loading(&mut self) {
+        if !matches!(self.marketplace_state, MarketplaceViewState::Loaded(_)) {
+            self.marketplace_state = MarketplaceViewState::Loading;
+        }
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_marketplace_catalog(&mut self, catalog: MarketplaceCatalog) {
+        pages::plugins::clear_plugin_icon_cache();
+        self.marketplace_state = MarketplaceViewState::Loaded(catalog.plugins);
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_marketplace_error(&mut self, error: String) {
+        self.marketplace_state = MarketplaceViewState::Failed(error);
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+
+    pub(crate) fn finish_marketplace_install(&mut self) {
+        self.marketplace_installing_id = None;
+        self.mark_items_dirty();
+        self.request_redraw();
+    }
+}

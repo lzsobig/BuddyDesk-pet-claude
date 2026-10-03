@@ -1,0 +1,59 @@
+mod controls;
+mod items;
+mod widget_preview;
+
+use winisland_render::{Painter, Rect};
+
+use crate::utils::color::SettingsTheme;
+use crate::utils::settings_ui::input::{
+    WidgetDropAnimation, WidgetEditorHover, WidgetEditorMode, WidgetEditorSlot, WidgetSource,
+};
+use std::collections::HashMap;
+use winisland_core::config::{CompactWidgetKind, CompactWidgetSlot, PluginWidgetSlot, WidgetSlot};
+use winisland_core::widgets::PluginWidget;
+use winisland_plugin_host::draw::replay::PreparedFrame;
+
+use super::anim::SwitchAnimator;
+use super::items::SettingsItem;
+
+pub(crate) use crate::utils::color::settings_color;
+pub(crate) use controls::{SettingsPainter, ellipsize_text};
+pub use items::{content_height, draw_items};
+
+pub struct ActiveStepperValue<'a> {
+    pub rect: Rect,
+    pub text: &'a str,
+    pub show_caret: bool,
+}
+
+pub struct DrawItemsParams<'a> {
+    pub painter: Painter<'a>,
+    pub items: &'a [SettingsItem],
+    pub start_y: f32,
+    pub width: f32,
+    pub anims: &'a SwitchAnimator,
+    pub theme: &'a SettingsTheme,
+    pub visible_min_y: f32,
+    pub visible_max_y: f32,
+    pub island_style: &'a str,
+    pub expanded_width: f32,
+    pub expanded_height: f32,
+    pub base_width: f32,
+    pub base_height: f32,
+    pub widget_editor_mode: WidgetEditorMode,
+    pub widget_layout: &'a [WidgetSlot],
+    pub plugin_widget_layout: &'a [PluginWidgetSlot],
+    pub plugin_widgets: &'a [PluginWidget],
+    pub plugin_frames: &'a HashMap<u64, PreparedFrame>,
+    pub widget_dragging: Option<&'a WidgetSource>,
+    pub widget_drag_hover_slot: Option<WidgetEditorSlot>,
+    pub widget_preview_hover_slot: Option<WidgetEditorSlot>,
+    pub compact_widget_layout: &'a [CompactWidgetSlot],
+    pub compact_widget_dragging: Option<CompactWidgetKind>,
+    pub widget_hover: Option<&'a WidgetEditorHover>,
+    pub widget_hover_progress: f32,
+    pub widget_drop_animation: Option<&'a WidgetDropAnimation>,
+    pub active_source_button: Option<Rect>,
+    pub active_stepper_value: Option<ActiveStepperValue<'a>>,
+    pub hover_pos: Option<(f32, f32)>,
+}
