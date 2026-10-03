@@ -345,32 +345,45 @@ impl AgentBridge {
     pub fn send_command(&self, action: &str, args: serde_json::Value) -> Result<(), String> {
         let path = self.path.as_ref().ok_or("Agent directory unavailable")?;
         let directory = path.parent().ok_or("Agent directory unavailable")?;
-        let commands = directory.join("agent-commands");
-        fs::create_dir_all(&commands).map_err(|error| error.to_string())?;
-        #[derive(Serialize)]
-        struct Command<'a> {
-            protocol_version: u32,
-            id: String,
-            issued_at_ms: u64,
-            action: &'a str,
-            #[serde(flatten)]
-            args: serde_json::Value,
-        }
-        let command = Command {
-            protocol_version: PROTOCOL_VERSION,
-            id: format!("{}-{}", std::process::id(), epoch_nanos()),
-            issued_at_ms: epoch_ms(),
-            action,
-            args,
-        };
-        let temp = commands.join(format!("{}.tmp", command.id));
-        let mut file = File::create(&temp).map_err(|error| error.to_string())?;
-        serde_json::to_writer(&mut file, &command).map_err(|error| error.to_string())?;
-        file.flush().map_err(|error| error.to_string())?;
-        drop(file);
-        let target = commands.join(format!("{}.json", command.id));
-        fs::rename(temp, target).map_err(|error| error.to_string())
+        write_agent_command(directory, action, args)
     }
+}
+
+pub(crate) fn send_settings_command(action: &str, args: serde_json::Value) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("Agent directory unavailable")?;
+    write_agent_command(&home.join(".buddydesk").join("winisland"), action, args)
+}
+
+fn write_agent_command(
+    directory: &std::path::Path,
+    action: &str,
+    args: serde_json::Value,
+) -> Result<(), String> {
+    let commands = directory.join("agent-commands");
+    fs::create_dir_all(&commands).map_err(|error| error.to_string())?;
+    #[derive(Serialize)]
+    struct Command<'a> {
+        protocol_version: u32,
+        id: String,
+        issued_at_ms: u64,
+        action: &'a str,
+        #[serde(flatten)]
+        args: serde_json::Value,
+    }
+    let command = Command {
+        protocol_version: PROTOCOL_VERSION,
+        id: format!("{}-{}", std::process::id(), epoch_nanos()),
+        issued_at_ms: epoch_ms(),
+        action,
+        args,
+    };
+    let temp = commands.join(format!("{}.tmp", command.id));
+    let mut file = File::create(&temp).map_err(|error| error.to_string())?;
+    serde_json::to_writer(&mut file, &command).map_err(|error| error.to_string())?;
+    file.flush().map_err(|error| error.to_string())?;
+    drop(file);
+    let target = commands.join(format!("{}.json", command.id));
+    fs::rename(temp, target).map_err(|error| error.to_string())
 }
 
 fn read_snapshot(path: &PathBuf) -> Result<AgentSnapshot, String> {

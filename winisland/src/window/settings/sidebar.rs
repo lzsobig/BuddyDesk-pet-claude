@@ -17,16 +17,17 @@ use super::{
     WINDOW_CONTROL_CENTERS, WINDOW_CONTROL_RADIUS,
 };
 
-const SIDEBAR_ICON_BYTES: [&[u8]; 5] = [
+const SIDEBAR_ICON_BYTES: [&[u8]; 6] = [
     include_bytes!("../../../resources/in_app/settings/settings.png"),
     include_bytes!("../../../resources/in_app/settings/music.png"),
     include_bytes!("../../../resources/in_app/settings/widget.png"),
     include_bytes!("../../../resources/in_app/settings/plugin.png"),
+    include_bytes!("../../../resources/buddydesk-cat.png"),
     include_bytes!("../../../resources/in_app/settings/about.png"),
 ];
 
 thread_local! {
-    static SIDEBAR_ICONS: RefCell<Option<[Image; 5]>> = const { RefCell::new(None) };
+    static SIDEBAR_ICONS: RefCell<Option<[Image; 6]>> = const { RefCell::new(None) };
     static PLUGIN_SETTINGS_ICONS: RefCell<HashMap<u64, Image>> = RefCell::new(HashMap::new());
 }
 
@@ -107,8 +108,8 @@ fn draw_sidebar_row_background(
     painter: Painter<'_>,
     theme: &SettingsTheme,
     index: usize,
+    row_y: f32,
 ) -> Rgba {
-    let row_y = SIDEBAR_START_Y + index as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
     let row_x = SIDEBAR_PAD;
     let row_w = SIDEBAR_W - SIDEBAR_PAD * 2.0;
     if app.active_page == index {
@@ -268,11 +269,11 @@ impl SettingsApp {
             tr("tab_music"),
             tr("tab_widgets"),
             tr("tab_plugins"),
-            tr("tab_about"),
+            tr("tab_pet"),
         ];
         for (index, label) in pages.iter().enumerate() {
             let row_y = SIDEBAR_START_Y + index as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
-            let text_color = draw_sidebar_row_background(self, painter, theme, index);
+            let text_color = draw_sidebar_row_background(self, painter, theme, index, row_y);
             let icon_rect = Rect::from_xywh(SIDEBAR_PAD + 7.0, row_y + 6.0, 22.0, 22.0);
             draw_sidebar_icon(drawing_context, painter, index, icon_rect);
             SettingsPainter::new(painter).text(
@@ -284,10 +285,23 @@ impl SettingsApp {
             );
         }
 
+        let plugin_start = self.sidebar_plugin_start_y();
+        let plugin_bottom = self.sidebar_about_y() - SIDEBAR_ROW_GAP;
+        painter.save();
+        painter.clip_rect(Rect::from_xywh(
+            0.0,
+            plugin_start,
+            SIDEBAR_W,
+            (plugin_bottom - plugin_start).max(0.0),
+        ));
         for (offset, page) in self.plugin_settings_pages.iter().enumerate() {
-            let index = super::BUILTIN_SIDEBAR_PAGE_COUNT + offset;
-            let row_y = SIDEBAR_START_Y + index as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
-            let text_color = draw_sidebar_row_background(self, painter, theme, index);
+            let index = super::PLUGIN_SETTINGS_START_INDEX + offset;
+            let row_y = plugin_start + offset as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP)
+                - self.sidebar_scroll;
+            if row_y + SIDEBAR_ROW_H < plugin_start || row_y > plugin_bottom {
+                continue;
+            }
+            let text_color = draw_sidebar_row_background(self, painter, theme, index, row_y);
             let icon_rect = Rect::from_xywh(SIDEBAR_PAD + 7.0, row_y + 6.0, 22.0, 22.0);
             draw_plugin_settings_icon(drawing_context, painter, page, icon_rect);
             let label = ellipsize_text(
@@ -305,5 +319,34 @@ impl SettingsApp {
                 text_color,
             );
         }
+        painter.restore();
+        if self.sidebar_max_scroll() > 0.0 {
+            let view_height = (plugin_bottom - plugin_start).max(1.0);
+            let track_height =
+                (view_height * view_height / (view_height + self.sidebar_max_scroll())).max(28.0);
+            let progress = self.sidebar_scroll / self.sidebar_max_scroll();
+            painter.fill_round_rect(
+                Rect::from_xywh(
+                    SIDEBAR_W - 5.0,
+                    plugin_start + (view_height - track_height) * progress,
+                    2.0,
+                    track_height,
+                ),
+                Radius::uniform(1.0),
+                settings_color(theme.text_sec),
+            );
+        }
+        let index = self.about_page_index();
+        let row_y = self.sidebar_about_y();
+        let text_color = draw_sidebar_row_background(self, painter, theme, index, row_y);
+        let icon_rect = Rect::from_xywh(SIDEBAR_PAD + 7.0, row_y + 6.0, 22.0, 22.0);
+        draw_sidebar_icon(drawing_context, painter, 5, icon_rect);
+        SettingsPainter::new(painter).text(
+            &tr("tab_about"),
+            (SIDEBAR_PAD + 36.0, row_y + 22.0),
+            13.0,
+            self.active_page == index,
+            text_color,
+        );
     }
 }

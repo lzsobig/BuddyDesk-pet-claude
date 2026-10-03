@@ -1,7 +1,7 @@
 use crate::platform::{MonitorRef, WindowRef, window};
 use crate::plugin::inventory::InstalledPlugin;
 use crate::utils::color::{SettingsTheme, dark_settings_theme, light_settings_theme};
-use crate::utils::settings_ui::items::{POPUP_MENU_R, SIDEBAR_PAD, SettingsItem};
+use crate::utils::settings_ui::items::{POPUP_MENU_R, SettingsItem};
 use crate::utils::settings_ui::{
     SwitchAnimator, WidgetDropAnimation, WidgetEditorHover, WidgetEditorMode, WidgetEditorSlot,
     WidgetSource,
@@ -37,10 +37,12 @@ pub(crate) const SIDEBAR_W: f32 = 184.0;
 pub(crate) const SIDEBAR_ROW_H: f32 = 34.0;
 pub(crate) const SIDEBAR_ROW_GAP: f32 = 2.0;
 pub(crate) const SIDEBAR_START_Y: f32 = 64.0;
-pub(crate) const BUILTIN_SIDEBAR_PAGE_COUNT: usize = 5;
+pub(crate) const BUILTIN_SIDEBAR_PAGE_COUNT: usize = 6;
 pub(crate) const GENERAL_PAGE_INDEX: usize = 0;
 pub(crate) const WIDGETS_PAGE_INDEX: usize = 2;
 pub(crate) const PLUGINS_PAGE_INDEX: usize = 3;
+pub(crate) const PET_PAGE_INDEX: usize = 4;
+pub(crate) const PLUGIN_SETTINGS_START_INDEX: usize = 5;
 pub(crate) const PAGE_NAV_X: f32 = SIDEBAR_W + 18.0;
 pub(crate) const PAGE_NAV_Y: f32 = 18.0;
 pub(crate) const PAGE_NAV_WIDTH: f32 = 34.0;
@@ -185,6 +187,11 @@ pub struct SettingsApp {
     pub(crate) renderer_target: Option<RendererTargetId>,
     pub(crate) config: AppConfig,
     pub(crate) active_page: usize,
+    pub(crate) pet_snapshot: pages::pet::PetSnapshot,
+    pub(crate) pet_last_modified: Option<std::time::SystemTime>,
+    pub(crate) pet_next_refresh: Instant,
+    pub(crate) pet_pending_until: Option<Instant>,
+    pub(crate) pet_feedback: Option<String>,
     pub(crate) page_history: Vec<usize>,
     pub(crate) page_history_index: usize,
     pub(crate) switch_anim: SwitchAnimator,
@@ -206,6 +213,7 @@ pub struct SettingsApp {
     pub(crate) detected_apps: Vec<String>,
     detected_apps_scan: Job<Vec<String>>,
     pub(crate) sidebar_hover: i32,
+    pub(crate) sidebar_scroll: f32,
     pub(crate) popup: Option<PopupState>,
     pub(crate) number_input: Option<NumberInput>,
     pub(crate) is_light: bool,
@@ -277,9 +285,35 @@ impl SettingsApp {
         BUILTIN_SIDEBAR_PAGE_COUNT + self.plugin_settings_pages.len()
     }
 
+    pub(crate) fn about_page_index(&self) -> usize {
+        self.sidebar_page_count() - 1
+    }
+
+    pub(crate) fn sidebar_plugin_start_y(&self) -> f32 {
+        SIDEBAR_START_Y + PLUGIN_SETTINGS_START_INDEX as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP)
+    }
+
+    pub(crate) fn sidebar_about_y(&self) -> f32 {
+        let natural =
+            SIDEBAR_START_Y + self.about_page_index() as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
+        natural.min(self.logical_window_size().1 - SIDEBAR_ROW_H - 16.0)
+    }
+
+    pub(crate) fn sidebar_max_scroll(&self) -> f32 {
+        let visible =
+            (self.sidebar_about_y() - SIDEBAR_ROW_GAP - self.sidebar_plugin_start_y()).max(0.0);
+        let content = if self.plugin_settings_pages.is_empty() {
+            0.0
+        } else {
+            self.plugin_settings_pages.len() as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP)
+                - SIDEBAR_ROW_GAP
+        };
+        (content - visible).max(0.0)
+    }
+
     pub(crate) fn active_plugin_settings_page(&self) -> Option<&PluginSettingsPage> {
         self.active_page
-            .checked_sub(BUILTIN_SIDEBAR_PAGE_COUNT)
+            .checked_sub(PLUGIN_SETTINGS_START_INDEX)
             .and_then(|index| self.plugin_settings_pages.get(index))
     }
 
@@ -289,7 +323,8 @@ impl SettingsApp {
             1 => winisland_core::i18n::tr("tab_music"),
             2 => winisland_core::i18n::tr("tab_widgets"),
             3 => winisland_core::i18n::tr("tab_plugins"),
-            4 => winisland_core::i18n::tr("tab_about"),
+            PET_PAGE_INDEX => winisland_core::i18n::tr("tab_pet"),
+            page if page == self.about_page_index() => winisland_core::i18n::tr("tab_about"),
             _ => self
                 .active_plugin_settings_page()
                 .map(|page| page.title.clone())
@@ -312,12 +347,18 @@ impl SettingsApp {
             config.resource_widget_rows,
         );
         let switch_anim = SwitchAnimator::new(&[]);
+        let (pet_snapshot, pet_last_modified) = pages::pet::PetSnapshot::read();
         let detected_apps = config.smtc_known_apps.clone();
         Self {
             window: None,
             renderer_target: None,
             config,
             active_page: GENERAL_PAGE_INDEX,
+            pet_snapshot,
+            pet_last_modified,
+            pet_next_refresh: Instant::now(),
+            pet_pending_until: None,
+            pet_feedback: None,
             page_history: vec![0],
             page_history_index: 0,
             switch_anim,
@@ -339,6 +380,7 @@ impl SettingsApp {
             detected_apps,
             detected_apps_scan: Job::idle(),
             sidebar_hover: -1,
+            sidebar_scroll: 0.0,
             popup: None,
             number_input: None,
             is_light: false,
@@ -978,14 +1020,9 @@ impl SettingsApp {
 
     fn update_sidebar_hover(&mut self) -> bool {
         let (mouse_x, mouse_y) = self.logical_mouse_pos;
-        let hover_index = (mouse_x < SIDEBAR_W).then(|| {
-            (0..self.sidebar_page_count()).find(|index| {
-                let row_y = SIDEBAR_START_Y + *index as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
-                (row_y..=row_y + SIDEBAR_ROW_H).contains(&mouse_y)
-                    && (SIDEBAR_PAD..=SIDEBAR_W - SIDEBAR_PAD).contains(&mouse_x)
-            })
-        });
-        let hover_index = hover_index.flatten();
+        let hover_index = (mouse_x < SIDEBAR_W)
+            .then(|| self.sidebar_page_at(mouse_x, mouse_y))
+            .flatten();
         let sidebar_hover = hover_index.map_or(-1, |index| index as i32);
         if sidebar_hover == self.sidebar_hover {
             return false;
@@ -1035,7 +1072,11 @@ impl SettingsApp {
         }
         let delta = scroll_delta(delta);
         let (mouse_x, _) = self.logical_mouse_pos;
-        if self.active_page == PLUGINS_PAGE_INDEX && self.plugin_detail_contains(mouse_x) {
+        if mouse_x < SIDEBAR_W && self.sidebar_max_scroll() > 0.0 {
+            self.sidebar_scroll =
+                (self.sidebar_scroll - delta).clamp(0.0, self.sidebar_max_scroll());
+            self.request_redraw();
+        } else if self.active_page == PLUGINS_PAGE_INDEX && self.plugin_detail_contains(mouse_x) {
             self.plugin_detail_scroll =
                 (self.plugin_detail_scroll - delta).clamp(0.0, self.plugin_detail_max_scroll);
             self.request_redraw();
@@ -1157,13 +1198,17 @@ impl SettingsApp {
         }
 
         self.frame_count += 1;
+        if self.active_page == PET_PAGE_INDEX {
+            self.refresh_pet_snapshot(Instant::now());
+        }
         self.poll_detected_apps();
         self.poll_plugin_inventory();
         if self.frame_count.is_multiple_of(120) {
             self.update_detected_apps();
         }
 
-        let has_anim = self.switch_anim.is_animating()
+        let has_anim = self.items_dirty
+            || self.switch_anim.is_animating()
             || self.anim.is_animating()
             || self.widget_interaction_animating();
         let has_popup = self.popup.is_some();
@@ -1178,7 +1223,7 @@ impl SettingsApp {
             is_widget_dragging,
             is_number_input_active,
         ) {
-            return None;
+            return (self.active_page == PET_PAGE_INDEX).then_some(self.pet_next_refresh);
         }
 
         let now = Instant::now();
@@ -1364,6 +1409,7 @@ impl SettingsApp {
 
     pub(crate) fn set_plugin_settings_pages(&mut self, pages: Vec<PluginSettingsPage>) {
         let previous_active_page = self.active_page;
+        let was_about_page = self.active_page == self.about_page_index();
         let icons_changed = self.plugin_settings_pages.len() != pages.len()
             || self.plugin_settings_pages.iter().any(|current| {
                 pages
@@ -1380,14 +1426,17 @@ impl SettingsApp {
             .active_plugin_settings_page()
             .map(|page| page.resource_id);
         self.plugin_settings_pages = pages;
+        self.sidebar_scroll = self.sidebar_scroll.clamp(0.0, self.sidebar_max_scroll());
         if let Some(resource_id) = active_resource {
             self.active_page = self
                 .plugin_settings_pages
                 .iter()
                 .position(|page| page.resource_id == resource_id)
                 .map_or(PLUGINS_PAGE_INDEX, |index| {
-                    BUILTIN_SIDEBAR_PAGE_COUNT + index
+                    PLUGIN_SETTINGS_START_INDEX + index
                 });
+        } else if was_about_page {
+            self.active_page = self.about_page_index();
         } else if self.active_page >= self.sidebar_page_count() {
             self.active_page = PLUGINS_PAGE_INDEX;
         }

@@ -1,14 +1,11 @@
-"""
-System Tray — QSystemTrayIcon with context menu and status indicator.
+"""BuddyDesk system tray and application actions."""
+from pathlib import Path
 
-Icon is a rounder cat-face with whiskers rendered via QPainter.
-Menu includes Show/Hide Chat toggle, About, and Quit.
-"""
 from PySide6.QtWidgets import QSystemTrayIcon, QMenu
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen, QFont, QAction
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtCore import Qt
 
-from theme import GREEN, AMBER, RED, BG_CARD, TEXT_PRIMARY, TEXT_MUTED, ACCENT, BG_DEEP
+from theme import GREEN, AMBER, RED, BG_CARD, TEXT_PRIMARY, ACCENT
 import config
 
 
@@ -17,75 +14,29 @@ _ICON_CACHE: dict[str, QIcon] = {}
 
 
 def _create_tray_icon(state: str = "idle") -> QIcon:
-    """Generate a polished cat-face tray icon with whiskers (cached)."""
     if state in _ICON_CACHE:
         return _ICON_CACHE[state]
 
-    pixmap = QPixmap(32, 32)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    source = Path(config.ASSETS_DIR) / "brand" / "logo.png"
+    logo = QPixmap(str(source))
+    if logo.isNull():
+        icon = QIcon(str(Path(config.ASSETS_DIR) / "buddydesk.ico"))
+        _ICON_CACHE[state] = icon
+        return icon
 
-    p = QPainter(pixmap)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pixmap = logo.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+    if state != "idle":
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor({"thinking": AMBER, "error": RED}.get(state, GREEN))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#f7f5ef"))
+        painter.drawEllipse(23, 1, 8, 8)
+        painter.setBrush(color)
+        painter.drawEllipse(24, 2, 6, 6)
+        painter.end()
 
-    color_map = {"idle": GREEN, "thinking": AMBER, "error": RED}
-    color = QColor(color_map.get(state, GREEN))
-
-    # Cat head — rounder shape
-    p.setBrush(QBrush(color))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawRoundedRect(5, 10, 22, 18, 8, 8)
-
-    # Ears — slightly more pointed
-    p.drawPolygon([
-        QPointF(5, 10), QPointF(8, 2), QPointF(13, 10),
-    ])
-    p.drawPolygon([
-        QPointF(19, 10), QPointF(24, 2), QPointF(27, 10),
-    ])
-
-    # Inner ear tint (lighter)
-    ear_inner = QColor(color)
-    ear_inner.setAlpha(90)
-    p.setBrush(QBrush(ear_inner.lighter(160)))
-    p.drawPolygon([
-        QPointF(6, 10), QPointF(8, 4), QPointF(12, 10),
-    ])
-    p.drawPolygon([
-        QPointF(20, 10), QPointF(24, 4), QPointF(26, 10),
-    ])
-
-    # Eyes
-    p.setBrush(QBrush(QColor(BG_DEEP)))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawEllipse(10, 15, 4, 4)
-    p.drawEllipse(18, 15, 4, 4)
-
-    # Eye highlights
-    p.setBrush(QBrush(QColor(255, 255, 255, 200)))
-    p.drawEllipse(11, 15, 2, 2)
-    p.drawEllipse(19, 15, 2, 2)
-
-    # Nose
-    p.setBrush(QBrush(QColor("#ff6b9d")))
-    nose_pts = [
-        QPointF(15, 20), QPointF(17, 20), QPointF(16, 21.5),
-    ]
-    p.drawPolygon(nose_pts)
-
-    # Whiskers
-    whisker_pen = QPen(QColor("#8B7355"))
-    whisker_pen.setWidth(1)
-    p.setPen(whisker_pen)
-    # Left whiskers
-    p.drawLine(QPointF(5, 18), QPointF(1, 17))
-    p.drawLine(QPointF(5, 19.5), QPointF(0, 19.5))
-    p.drawLine(QPointF(5, 21), QPointF(1, 22))
-    # Right whiskers
-    p.drawLine(QPointF(27, 18), QPointF(31, 17))
-    p.drawLine(QPointF(27, 19.5), QPointF(32, 19.5))
-    p.drawLine(QPointF(27, 21), QPointF(31, 22))
-
-    p.end()
     icon = QIcon(pixmap)
     _ICON_CACHE[state] = icon
     return icon
@@ -175,7 +126,7 @@ class SystemTray(QSystemTrayIcon):
         """Show a brief about message via tray notification."""
         self.showMessage(
             f"BuddyDesk v{config.APP_VERSION}",
-            "Windows 桌面 AI 伴侣\n灵动岛 · 像素橘猫 · 自然语言命令执行\n\n快捷键: Ctrl+Shift+H 呼出/隐藏聊天",
+            "Windows 桌面 AI 伴侣\n灵动岛 · 小橘桌宠 · 任务与提醒\n\nAlt+F 和小橘说话；Ctrl+Shift+H 打开聊天",
             _create_tray_icon("idle"),
             5000,
         )

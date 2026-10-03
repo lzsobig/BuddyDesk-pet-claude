@@ -12,6 +12,7 @@ use super::{SIDEBAR_W, SettingsApp};
 pub mod about;
 pub mod general;
 pub mod music;
+pub mod pet;
 pub mod plugin_settings;
 pub mod plugins;
 mod schema;

@@ -641,6 +641,12 @@ class SettingsPanel(QDialog):
         if p.get("model"):
             self._model_input.setText(p["model"])
 
+    def apply_external_pet_settings(self, settings, key):
+        for field in ("pet_id", "pet_name", "pet_enabled", "pet_island_enabled",
+                      "pet_roam", "pet_position"):
+            self._config[field] = settings.get(field)
+        self._pet_page.apply_external_setting(key, settings)
+
     def _save(self):
         access_mode = self._access_mode.currentData()
         try:

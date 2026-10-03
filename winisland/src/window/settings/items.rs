@@ -1,7 +1,7 @@
 use crate::utils::settings_ui::content_height;
 use crate::utils::settings_ui::items::SettingsItem;
 
-use super::{SETTINGS_HEADER_H, SettingsApp};
+use super::{PET_PAGE_INDEX, SETTINGS_HEADER_H, SettingsApp};
 
 impl SettingsApp {
     pub(crate) fn build_current_items(&self) -> Vec<SettingsItem> {
@@ -10,7 +10,8 @@ impl SettingsApp {
             1 => self.build_music_items(),
             2 => self.build_widget_items(),
             3 => self.build_plugin_items(),
-            4 => self.build_about_items(),
+            PET_PAGE_INDEX => self.build_pet_items(),
+            page if page == self.about_page_index() => self.build_about_items(),
             _ => self.build_plugin_settings_items(),
         }
     }

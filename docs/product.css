@@ -2011,13 +2011,16 @@ pre {
   font-size: 18px;
   letter-spacing: -0.025em;
 }
-.brand-mark {
-  width: 14px;
-  height: 14px;
-  background: var(--orange);
-  border-radius: 4px;
-  display: inline-block;
-  transform: rotate(-6deg);
+.brand-logo {
+  width: 25px;
+  height: 25px;
+  object-fit: contain;
+  flex: none;
+}
+.footer .wordmark img {
+  width: 23px;
+  height: 23px;
+  object-fit: contain;
 }
 .nav-brand .ver {
   font-family: "JetBrains Mono", monospace;

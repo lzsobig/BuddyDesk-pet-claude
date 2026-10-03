@@ -6,8 +6,8 @@ use winisland_render::{Point, Rect};
 use super::pages::PageInput;
 use super::{
     NumberInput, NumberInputHandler, PAGE_NAV_GAP, PAGE_NAV_HEIGHT, PAGE_NAV_WIDTH, PAGE_NAV_X,
-    PAGE_NAV_Y, PLUGINS_PAGE_INDEX, POPUP_OPACITY_KEY, PageNavigation, SETTINGS_HEADER_H,
-    SIDEBAR_ROW_GAP, SIDEBAR_ROW_H, SIDEBAR_START_Y, SIDEBAR_W, SettingsApp,
+    PAGE_NAV_Y, PET_PAGE_INDEX, PLUGINS_PAGE_INDEX, POPUP_OPACITY_KEY, PageNavigation,
+    SETTINGS_HEADER_H, SIDEBAR_ROW_GAP, SIDEBAR_ROW_H, SIDEBAR_START_Y, SIDEBAR_W, SettingsApp,
 };
 
 impl SettingsApp {
@@ -37,7 +37,7 @@ impl SettingsApp {
             self.anim.set_with_speed(POPUP_OPACITY_KEY, 0.0, 0.3);
             if let Some((on_select, value)) = selection {
                 on_select(self, &value);
-                if !plugin_setting {
+                if !plugin_setting && self.active_page != PET_PAGE_INDEX {
                     self.persist_settings_change();
                 }
             } else {
@@ -87,7 +87,8 @@ impl SettingsApp {
                 }
             }
             3 => self.handle_plugin_click(),
-            4 => self.handle_about_click(input),
+            PET_PAGE_INDEX => self.handle_pet_click(input),
+            page if page == self.about_page_index() => self.handle_about_click(input),
             _ => self.handle_plugin_settings_click(input),
         }
     }
@@ -172,14 +173,33 @@ impl SettingsApp {
         )
     }
 
-    fn sidebar_page_at(&self, x: f32, y: f32) -> Option<usize> {
+    pub(super) fn sidebar_page_at(&self, x: f32, y: f32) -> Option<usize> {
         if !(SIDEBAR_PAD..=SIDEBAR_W - SIDEBAR_PAD).contains(&x) {
             return None;
         }
-        (0..self.sidebar_page_count()).find(|&page| {
-            let row_y = SIDEBAR_START_Y + page as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
+        if let Some(page) = (0..super::PLUGIN_SETTINGS_START_INDEX).find(|page| {
+            let row_y = SIDEBAR_START_Y + *page as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP);
             (row_y..=row_y + SIDEBAR_ROW_H).contains(&y)
-        })
+        }) {
+            return Some(page);
+        }
+        let about_y = self.sidebar_about_y();
+        if (about_y..=about_y + SIDEBAR_ROW_H).contains(&y) {
+            return Some(self.about_page_index());
+        }
+        let start = self.sidebar_plugin_start_y();
+        if !(start..about_y - SIDEBAR_ROW_GAP).contains(&y) {
+            return None;
+        }
+        self.plugin_settings_pages
+            .iter()
+            .enumerate()
+            .find(|(offset, _)| {
+                let row_y = start + *offset as f32 * (SIDEBAR_ROW_H + SIDEBAR_ROW_GAP)
+                    - self.sidebar_scroll;
+                (row_y..=row_y + SIDEBAR_ROW_H).contains(&y)
+            })
+            .map(|(offset, _)| super::PLUGIN_SETTINGS_START_INDEX + offset)
     }
 
     pub(super) fn page_navigation_at(mouse_x: f32, mouse_y: f32) -> Option<PageNavigation> {

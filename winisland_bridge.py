@@ -303,8 +303,10 @@ class WinIslandBridge(QObject):
     def _poll_agent_commands(self):
         import itertools
         directory = self.directory / "agent-commands"
-        if not directory.is_dir() or directory.is_symlink() or not getattr(self.main_app, "agent", None):
+        if not directory.is_dir() or directory.is_symlink():
             return
+        agent_actions = ("open_tasks", "task_complete", "task_reopen", "task_detail",
+                         "reminder_snooze", "reminder_complete", "reminder_dismiss")
         self._dispatching = True
         try:
             for path in sorted(itertools.islice(directory.glob("*.json"), 128))[:32]:
@@ -320,12 +322,49 @@ class WinIslandBridge(QObject):
                         continue
                     identity = command.get("id")
                     issued = command.get("issued_at_ms")
+                    action = command.get("action")
                     valid = (command.get("protocol_version") == 1 and isinstance(identity, str)
                         and 0 < len(identity) <= 128 and type(issued) is int
                         and -5000 <= int(time.time() * 1000) - issued <= 120000
-                        and command.get("action") in ("open_tasks", "task_complete", "task_reopen", "task_detail", "reminder_snooze", "reminder_complete", "reminder_dismiss"))
+                        and action in (*agent_actions, "pet_update", "open_pet_settings"))
                     if valid and identity not in self._seen_ids:
-                        self.main_app.agent.handle_command(command)
+                        if action in agent_actions:
+                            if not getattr(self.main_app, "agent", None):
+                                continue
+                            self.main_app.agent.handle_command(command)
+                        elif action == "open_pet_settings":
+                            if set(command) != {"protocol_version", "id", "issued_at_ms", "action"}:
+                                path.unlink(missing_ok=True)
+                                continue
+                            self.main_app._open_settings(3)
+                        else:
+                            if set(command) != {"protocol_version", "id", "issued_at_ms", "action", "key", "value"}:
+                                path.unlink(missing_ok=True)
+                                continue
+                            key = command["key"]
+                            value = command["value"]
+                            if key == "pet_id":
+                                from pet_library import pets
+                                allowed = isinstance(value, str) and value in {pet["id"] for pet in pets()}
+                            elif key == "pet_name":
+                                allowed = (isinstance(value, str) and 0 < len(value.strip())
+                                           and len(value) <= 24
+                                           and not any(ord(char) < 32 for char in value))
+                            elif key in ("pet_enabled", "pet_island_enabled", "pet_roam"):
+                                allowed = type(value) is bool
+                            else:
+                                allowed = key == "pet_position" and value is None
+                            if not allowed:
+                                path.unlink(missing_ok=True)
+                                continue
+                            import config as cfg
+                            new_config = dict(self.main_app._user_config)
+                            new_config[key] = value.strip() if key == "pet_name" else value
+                            if key == "pet_id":
+                                new_config["pet_name"] = next(
+                                    pet["name"] for pet in pets() if pet["id"] == value)
+                            cfg.save_user_config(new_config)
+                            self.main_app.apply_external_pet_settings(new_config, key)
                         self._seen_ids.append(identity)
                     path.unlink()
                     self._clear_failure("agent_commands")

@@ -115,6 +115,24 @@ class PetSettings(QFrame):
         self.name.setText(pet["name"])
         self._refresh_preview()
 
+    def apply_external_setting(self, key, settings):
+        if key == "pet_id":
+            self._reload(settings.get("pet_id", "orange"))
+            self.name.setText(str(settings.get("pet_name", "小橘")))
+        elif key == "pet_name":
+            self.name.setText(str(settings.get("pet_name", "小橘")))
+        elif key == "pet_enabled":
+            self.desktop.setChecked(bool(settings.get("pet_enabled", True)))
+        elif key == "pet_island_enabled":
+            self.island.setChecked(bool(settings.get("pet_island_enabled", True)))
+        elif key == "pet_roam":
+            self.roam.setChecked(bool(settings.get("pet_roam", False)))
+        elif key == "pet_position":
+            self._position = settings.get("pet_position")
+            self._position_reset = self._position is None
+            if self._position_reset:
+                self.hint.setText("桌面宠物已回到主屏幕右下角。")
+
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_preview()

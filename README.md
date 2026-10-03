@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/companion-idle.png" width="112" alt="小橘，BuddyDesk 的橘猫桌宠">
+  <img src="docs/assets/logo.png" width="112" alt="BuddyDesk 黑橙色标识">
 </p>
 <h1 align="center">BuddyDesk</h1>
 <p align="center">

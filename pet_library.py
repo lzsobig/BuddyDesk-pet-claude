@@ -528,8 +528,26 @@ def update_thinking_image(pet_id: str, source: str) -> dict:
 
 
 def island_settings(settings: dict) -> dict:
-    pet = resolve_pet(str(settings.get("pet_id", "orange")))
+    choices = pets()
+    pet = next((choice for choice in choices if choice["id"] == settings.get("pet_id")), choices[0])
+    available = choices[:32]
+    if pet not in available:
+        available = [*choices[:31], pet]
+    position = settings.get("pet_position")
+    if (not isinstance(position, dict) or type(position.get("x")) is not int
+            or type(position.get("y")) is not int or not isinstance(position.get("screen"), str)
+            or abs(position["x"]) > 1_000_000 or abs(position["y"]) > 1_000_000
+            or len(position["screen"]) > 64
+            or any(ord(char) < 32 for char in position["screen"])):
+        position = None
+    else:
+        position = {"x": position["x"], "y": position["y"], "screen": position["screen"]}
     return {"protocol_version": 1, "pet_id": pet["id"],
             "pet_name": str(settings.get("pet_name", pet["name"]))[:24],
             "island_enabled": bool(settings.get("pet_island_enabled", True)),
+            "desktop_enabled": bool(settings.get("pet_enabled", True)),
+            "roam_enabled": bool(settings.get("pet_roam", False)),
+            "position": position,
+            "available_pets": [{"id": choice["id"], "name": choice["name"][:24]}
+                               for choice in available],
             "idle_path": pet["idle"], "thinking_path": pet["thinking"]}

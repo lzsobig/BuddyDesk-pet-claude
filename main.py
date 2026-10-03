@@ -340,6 +340,19 @@ class BuddyDeskApp:
             from agent_tools import create_registry
             self.agent.tools = create_registry(self.agent.store, self.agent.context, self.command_engine)
 
+    def apply_external_pet_settings(self, new_config: dict, key: str):
+        self._user_config = new_config
+        if self.bridge:
+            self.bridge.user_config = new_config
+        if self._settings_dialog:
+            self._settings_dialog.apply_external_pet_settings(new_config, key)
+        if self.chat:
+            self.chat._pet_title.setText(str(new_config.get("pet_name", "小橘")))
+            self.chat._refresh_pet_avatar()
+        self._apply_pet_settings(new_config)
+        if self.winisland:
+            self.winisland.refresh_pet()
+
     def _apply_pet_settings(self, settings):
         enabled = bool(settings.get("pet_enabled", True))
         if enabled and self.pet is None:
@@ -363,11 +376,19 @@ class BuddyDeskApp:
     def _save_pet_position(self, x, y, screen):
         self._user_config["pet_position"] = {"x": x, "y": y, "screen": screen}
         cfg.save_user_config(self._user_config)
+        if self._settings_dialog:
+            self._settings_dialog.apply_external_pet_settings(self._user_config, "pet_position")
+        if self.winisland:
+            self.winisland.refresh_pet()
 
     def _hide_desktop_pet(self):
         self._user_config["pet_enabled"] = False
         self._apply_pet_settings(self._user_config)
         cfg.save_user_config(self._user_config)
+        if self._settings_dialog:
+            self._settings_dialog.apply_external_pet_settings(self._user_config, "pet_enabled")
+        if self.winisland:
+            self.winisland.refresh_pet()
 
     # ── Command confirmation ────────────────────────────────────────
     def _on_confirm_command(self, command: str):

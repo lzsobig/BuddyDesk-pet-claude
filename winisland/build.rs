@@ -15,6 +15,7 @@ fn main() {
         let mut res = winres::WindowsResource::new();
 
         let icon_path = "resources/icon-dark.ico";
+        println!("cargo:rerun-if-changed={icon_path}");
         if std::path::Path::new(icon_path).exists() {
             res.set_icon(icon_path);
         } else {
