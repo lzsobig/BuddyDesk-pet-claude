@@ -54,7 +54,8 @@ impl App {
 
     pub(super) fn input_target_size(&self) -> (f32, f32) {
         let dpi = self.window.map_or(1.0, |window| window.scale_factor()) as f32;
-        (360.0 * dpi, 112.0 * dpi)
+        let (width, height) = self.agent.input_size();
+        (width * dpi, height * dpi)
     }
 
     pub(super) fn get_target_monitor(window: &WindowRef, monitor_index: i32) -> Option<MonitorRef> {

@@ -177,6 +177,8 @@ pub struct AgentSnapshot {
     pub reveal_id: String,
     pub reveal_at_ms: u64,
     pub input_session: String,
+    pub input_width: usize,
+    pub input_height: usize,
 }
 
 #[derive(Default)]
@@ -236,6 +238,8 @@ impl AgentSnapshot {
             && self.reveal_id == other.reveal_id
             && self.reveal_at_ms == other.reveal_at_ms
             && self.input_session == other.input_session
+            && self.input_width == other.input_width
+            && self.input_height == other.input_height
             && self
                 .tasks
                 .iter()
@@ -342,6 +346,26 @@ impl AgentBridge {
             .as_ref()
             .filter(|_| self.connected)
             .map_or("", |snapshot| snapshot.input_session.as_str())
+    }
+
+    pub fn input_size(&self) -> (f32, f32) {
+        self.snapshot
+            .as_ref()
+            .filter(|_| self.connected)
+            .map_or((360.0, 112.0), |snapshot| {
+                (
+                    if snapshot.input_width == 0 {
+                        360
+                    } else {
+                        snapshot.input_width.clamp(320, 560)
+                    } as f32,
+                    if snapshot.input_height == 0 {
+                        112
+                    } else {
+                        snapshot.input_height.clamp(112, 360)
+                    } as f32,
+                )
+            })
     }
 
     pub fn send_command(&self, action: &str, args: serde_json::Value) -> Result<(), String> {

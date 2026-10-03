@@ -118,7 +118,7 @@ def create_registry(store, context, command_engine):
         return store.create_reminder(task_id, trigger_at)
     add("create_reminder", "添加提醒", 1, {"task_id": string, "trigger_at": string}, ["task_id", "trigger_at"], reminder)
     add("read_file", "读取指定文件", 2, {"filename": string}, ["filename"], read_document)
-    add("open_app", "打开应用", 2, {"app_name": string}, ["app_name"], command_engine.open_app)
+    add("open_app", "打开应用", 2, {"app_name": string, "entry_id": string}, ["app_name"], command_engine.open_app)
     add("open_file", "打开指定文件", 2, {"filename": string}, ["filename"], lambda filename: os.startfile(filename))
     add("run_command", "执行本地命令", 3, {"command": string}, ["command"], lambda command: command_engine.execute_command(command, auto_confirm=True))
     add("run_shell", "执行 Shell 命令", 3, {"command": string}, ["command"], lambda command: command_engine.execute_shell(command, auto_confirm=True))

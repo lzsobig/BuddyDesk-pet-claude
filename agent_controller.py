@@ -21,19 +21,21 @@ from ui.agent_panels import DraftDialog, TasksDialog, ReminderCard, TaskDetail, 
 
 
 class AgentHotkeys(QAbstractNativeEventFilter):
-    def __init__(self, app, toggle, cancel=None):
+    def __init__(self, app, toggle, cancel=None, *, identity=0xBADD, shortcut="Alt+F"):
         super().__init__()
         self.app, self.toggle = app, toggle
         self.cancel = cancel
         self.cancel_identity = 0xBADE
         self.cancel_registered = False
-        self.identity = 0xBADD
+        self.identity = identity
         self.registered = False
-        self.label = "Alt+F"
+        choices = {"Alt+F": (0x4001, 0x46), "Alt+Space": (0x4001, 0x20),
+                   "Ctrl+Alt+Space": (0x4003, 0x20), "Ctrl+Shift+Space": (0x4006, 0x20)}
+        self.label = shortcut if shortcut in choices else "Alt+Space"
         import sys
         if sys.platform == "win32":
             user32 = ctypes.windll.user32
-            self.registered = bool(user32.RegisterHotKey(None, self.identity, 0x4001, 0x46))
+            self.registered = bool(user32.RegisterHotKey(None, self.identity, *choices[self.label]))
             if self.registered:
                 app.installNativeEventFilter(self)
 
@@ -132,6 +134,8 @@ class AgentController(QObject):
         self.planned.connect(self._planned)
         self.file_ready.connect(lambda *args: self._guard(self._files_ready, *args))
         self.hotkeys = AgentHotkeys(main.app, self.toggle_voice, self.cancel)
+        from ui.quick_launcher import QuickLauncher
+        self.launcher = QuickLauncher(self)
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(lambda: self._guard(self.tick))
@@ -180,6 +184,7 @@ class AgentController(QObject):
         self._present(self.state.snapshot())
 
     def update_settings(self, settings):
+        self.launcher.update_settings(settings)
         current = {key: settings.get(key) for key in self._voice_configuration}
         if current != self._voice_configuration:
             if self.voice.recording or self.voice.processing or self.ime.active:
@@ -191,6 +196,8 @@ class AgentController(QObject):
             action.setChecked(key == source)
 
     def toggle_voice(self, supplement=False):
+        if self.launcher.active:
+            self.launcher.close()
         if self.ime.active:
             self.ime.finish()
             return
@@ -598,7 +605,9 @@ class AgentController(QObject):
                         reminder_id=self._active_reminder["id"] if self._active_reminder else "",
                         reveal_id=self._reveal_id, reveal_at_ms=self._reveal_at_ms,
                         input_session=self.ime.input_session if self.ime.active else "",
-                        input_width=360, input_height=112)
+                        input_width=360, input_height=self.launcher.height if self.launcher.active else 112,
+                        launcher_hotkey=self.launcher.hotkey.label,
+                        launcher_registered=self.launcher.hotkey.registered)
         key = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
         if not force and key == self._published_key:
             return
@@ -822,16 +831,42 @@ class AgentController(QObject):
                 tags.append(match.groups())
         for kind, value in tags[:10]:
             name, parameter = kinds[kind]
+            arguments = {parameter: value.strip()}
+            description = f"{name}: {value.strip()}"
+            selected_app = False
+            app_has_arguments = False
+            if name == "open_app":
+                from engine.app_index import get_app_index
+                choices = get_app_index().exact_apps(value.strip())
+                if len(choices) > 1:
+                    from engine.command_engine import _redact_command
+                    labels = [f"{number + 1}. {entry.name} · {entry.source}\n{entry.target}\n目标：{entry.destination}\n参数：{_redact_command(entry.arguments) or '无'}" for number, entry in enumerate(choices)]
+                    selected, accepted = QInputDialog.getItem(self.main.chat, "选择要打开的应用", "打开哪一个启动方式？", labels, 0, False)
+                    if not accepted:
+                        self.store.audit(name, None, "denied")
+                        continue
+                    entry = choices[labels.index(selected)]
+                    selected_app = True
+                elif choices:
+                    entry = choices[0]
+                else:
+                    entry = None
+                if entry is not None:
+                    from engine.command_engine import _redact_command
+                    app_has_arguments = bool(entry.arguments.strip())
+                    arguments["entry_id"] = entry.id
+                    description = f"打开 {entry.name}\n来源：{entry.source}\n启动位置：{entry.target}\n目标：{entry.destination}\n参数：{_redact_command(entry.arguments) or '无'}"
             automatic = (self.main._user_config.get("agent_access_mode") == "full"
-                         and not getattr(self.main.bridge, "response_requires_confirmation", True))
-            if not automatic:
-                dialog = ConfirmDialog(f"{name}: {value.strip()}", parent=self.main.chat)
+                         and not getattr(self.main.bridge, "response_requires_confirmation", True)
+                         and not app_has_arguments)
+            if not automatic and (not selected_app or app_has_arguments):
+                dialog = ConfirmDialog(description, parent=self.main.chat)
                 if dialog.exec() != dialog.DialogCode.Accepted:
                     self.store.audit(name, None, "denied")
                     continue
             else:
-                self.store.audit(name, None, "authorized_by_full_access")
-            approved.append((name, {parameter: value.strip()}, value.strip()))
+                self.store.audit(name, None, "authorized_by_full_access" if automatic else "authorized_by_selection")
+            approved.append((name, arguments, value.strip()))
         if not approved:
             return
         if not self._tools_running:
@@ -1021,6 +1056,7 @@ class AgentController(QObject):
                 QMessageBox.warning(None, "未保存记忆", str(error))
 
     def close(self):
+        self.launcher.shutdown()
         self.cancel()
         if self._file_dialog:
             self._file_dialog.close()

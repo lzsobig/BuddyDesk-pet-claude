@@ -252,7 +252,9 @@ class WinIslandBridge(QObject):
                 return
             action = command.get("action")
             agent_actions = ("open_tasks", "task_complete", "task_reopen", "task_detail", "reminder_snooze", "reminder_complete", "reminder_dismiss")
-            if action not in ("open_chat", "open_settings", "open_pet_settings", "pet_state", *agent_actions):
+            if action not in ("open_chat", "open_launcher", "open_settings", "open_pet_settings", "pet_state", *agent_actions):
+                return
+            if action == "open_launcher" and (not isinstance(command.get("query", ""), str) or len(command.get("query", "")) > 500):
                 return
             if action == "pet_state" and (
                 not isinstance(command.get("state"), str)
@@ -271,6 +273,13 @@ class WinIslandBridge(QObject):
                     self.main_app.agent.handle_command(command)
                 elif action == "open_chat":
                     self.main_app._show_chat()
+                elif action == "open_launcher" and self.main_app.agent:
+                    launcher = self.main_app.agent.launcher
+                    if not launcher.active:
+                        launcher.toggle()
+                    if launcher.active:
+                        launcher.card.editor.setPlainText(command.get("query", ""))
+                        launcher.search()
                 elif action == "open_settings":
                     self.main_app._open_settings()
                 elif action == "open_pet_settings":

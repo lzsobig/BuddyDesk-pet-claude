@@ -13,6 +13,8 @@ Pillow>=10.0.0
 
 # Global Hotkeys
 pynput>=1.7.6
+pypinyin>=0.51
+pywin32>=306; sys_platform == "win32"
 
 # Voice Input (P3-6 / 闪电说迁移)
 sounddevice>=0.4.6        # 麦克风采集

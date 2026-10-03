@@ -257,6 +257,27 @@ class SettingsPanel(QDialog):
         access_hint.setWordWrap(True)
         access_hint.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
         form.addWidget(access_hint)
+        self._launcher_hotkey = SettingsCombo()
+        self._launcher_hotkey.addItems(["Alt+Space", "Ctrl+Alt+Space", "Ctrl+Shift+Space"])
+        form.addWidget(_make_field_row("快速搜索", self._launcher_hotkey))
+        launcher_hint = QLabel("输入应用名或拼音，Enter 打开；Ctrl+Enter 才交给小橘。\n快捷键被其他程序占用时，可换组合键或从托盘进入。")
+        launcher_hint.setWordWrap(True)
+        launcher_hint.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
+        form.addWidget(launcher_hint)
+        self._launcher_folders = list(self._config.get("launcher_folders", []))
+        self._launcher_folder_label = QLabel()
+        self._launcher_folder_label.setWordWrap(True)
+        self._launcher_folder_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._launcher_folder_label.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
+        folder_buttons = QHBoxLayout()
+        add_folder = QPushButton("添加搜索文件夹")
+        clear_folders = QPushButton("清空指定文件夹")
+        add_folder.clicked.connect(self._add_launcher_folder)
+        clear_folders.clicked.connect(self._clear_launcher_folders)
+        folder_buttons.addWidget(add_folder)
+        folder_buttons.addWidget(clear_folders)
+        form.addLayout(folder_buttons)
+        form.addWidget(self._launcher_folder_label)
         self._sound_cb = SettingSwitch("声音提示")
         self._sound_cb.toggled.connect(self._on_sound_master_toggled)
         self._clipboard_cb = SettingSwitch("剪贴板监听")
@@ -628,6 +649,9 @@ class SettingsPanel(QDialog):
         self._sound_cb.setChecked(self._config.get("sound_enabled", True))
         self._clipboard_cb.setChecked(self._config.get("clipboard_monitor", False))
         self._autostart_cb.setChecked(self._config.get("autostart", False))
+        self._launcher_hotkey.setCurrentText(self._config.get("launcher_hotkey", "Alt+Space"))
+        self._launcher_folders = list(self._config.get("launcher_folders", []))
+        self._launcher_folder_label.setText("指定文件夹：" + ("、".join(self._launcher_folders) or "未添加。默认搜索桌面、开始菜单和已注册应用。"))
 
         # Populate 5 sound event rows
         for event, row in self._sound_rows.items():
@@ -656,6 +680,16 @@ class SettingsPanel(QDialog):
         self._preset_combo.blockSignals(False)
 
         self._on_backend_changed()
+
+    def _add_launcher_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "添加应用搜索文件夹")
+        if path and path not in self._launcher_folders and len(self._launcher_folders) < 16:
+            self._launcher_folders.append(path)
+            self._launcher_folder_label.setText("指定文件夹：" + "、".join(self._launcher_folders))
+
+    def _clear_launcher_folders(self):
+        self._launcher_folders = []
+        self._launcher_folder_label.setText("默认搜索桌面、开始菜单和已注册应用。")
 
     def _on_backend_changed(self):
         backend = self._backend_combo.currentData()
@@ -715,6 +749,8 @@ class SettingsPanel(QDialog):
                 return
         self._config.update(voice)
         self._config["agent_access_mode"] = access_mode
+        self._config["launcher_hotkey"] = self._launcher_hotkey.currentText()
+        self._config["launcher_folders"] = list(self._launcher_folders)
         self._config.update(self._pet_page.values())
         self._config["backend"] = self._backend_combo.currentData()
         self._config["openai_api_key"] = self._apikey_input.text().strip()
@@ -736,6 +772,7 @@ class SettingsPanel(QDialog):
 
         cfg.save_user_config(self._config)
         self.saved.emit(self._config)
+        self._launcher_hotkey.setCurrentText(self._config.get("launcher_hotkey", "Alt+Space"))
         if not self._dock_mode:
             self.accept()
 

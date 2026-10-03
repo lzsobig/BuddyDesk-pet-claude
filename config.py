@@ -143,6 +143,8 @@ DEFAULT_USER_CONFIG: dict[str, Any] = {
     # 杂项开关
     "clipboard_monitor": False,
     "autostart": False,
+    "launcher_hotkey": "Alt+Space",
+    "launcher_folders": [],
     "voice_mode": "local",
     "agent_voice_provider": "local",
     "agent_access_mode": "confirm",

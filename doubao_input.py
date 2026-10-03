@@ -90,8 +90,21 @@ class _InputProfile:
 class _Receiver(QPlainTextEdit):
     preview = Signal(str)
     submit = Signal()
+    launcher_activate = Signal()
+    launcher_move = Signal(int)
+    launcher_mode = False
+    _composing = False
 
     def keyPressEvent(self, event):
+        if self.launcher_mode and not self._composing:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self.launcher_activate.emit()
+                event.accept()
+                return
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                self.launcher_move.emit(-1 if event.key() == Qt.Key.Key_Up else 1)
+                event.accept()
+                return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.submit.emit()
             event.accept()
@@ -99,6 +112,7 @@ class _Receiver(QPlainTextEdit):
         super().keyPressEvent(event)
 
     def inputMethodEvent(self, event):
+        self._composing = bool(event.preeditString())
         super().inputMethodEvent(event)
         body = self.toPlainText()
         cursor = self.textCursor().position()
@@ -396,7 +410,7 @@ class DoubaoInput(QObject):
             return
         surface = self._read_surface()
         matches = surface and surface.get("active") is True and surface.get("input_session") == self.input_session
-        if matches and surface.get("ready") is True:
+        if matches and (surface.get("ready") is True or self.card.docked):
             self.card.set_docked(bool(self._place_surface(surface)))
             self._reveal_controls()
         elif self.card.docked:
@@ -450,6 +464,10 @@ class DoubaoInput(QObject):
             self.partial.emit(self.card.editor.toPlainText())
 
     def finish(self):
+        launcher = getattr(self, "_launcher", None)
+        if launcher is not None and launcher.active:
+            launcher.submit_agent()
+            return
         if not self.active or self.finishing:
             return
         if self.direct_mode:
@@ -505,6 +523,14 @@ class DoubaoInput(QObject):
             self.state_changed.emit("listening")
 
     def cancel(self):
+        launcher = getattr(self, "_launcher", None)
+        if launcher is not None and launcher.active:
+            launcher.close()
+            return
+        if self.card.editor.launcher_mode:
+            if self.active:
+                self._close()
+            return
         if not self.active:
             return
         if self._profile and self._owns_focus():

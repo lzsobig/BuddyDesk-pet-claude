@@ -243,9 +243,19 @@ class AppRegistry:
             Command string to launch the app, or empty string if not found
         """
         name_lower = name.lower().strip()
+        if not name_lower:
+            return ""
 
         if sys.platform == "win32":
-            return cls._find_windows_app(name_lower)
+            from engine.app_index import get_app_index
+            matches = get_app_index().exact_apps(name)
+            if len(matches) > 1:
+                return ""
+            if matches and cls._path_launchable(matches[0].target):
+                return f'"{matches[0].target}"'
+            if name_lower in cls.WINDOWS_APPS or cls._find_via_special(name_lower):
+                return cls._find_windows_app(name_lower)
+            return cls._find_via_app_paths(name_lower) or ""
         elif sys.platform == "darwin":
             return cls._find_macos_app(name_lower)
         else:
@@ -739,7 +749,7 @@ class CommandEngine:
             env.pop(key, None)
         return env
 
-    def open_app(self, app_name: str) -> CommandResult:
+    def open_app(self, app_name: str, entry_id: str | None = None) -> CommandResult:
         """Open an application by name.
 
         Args:
@@ -748,6 +758,24 @@ class CommandEngine:
         Returns:
             CommandResult with execution status
         """
+        if not isinstance(app_name, str) or not app_name.strip():
+            return CommandResult(False, error="请指定要打开的应用")
+        if sys.platform == "win32":
+            from engine.app_index import get_app_index
+            matches = get_app_index().exact_apps(app_name)
+            if entry_id is not None:
+                entry = next((entry for entry in matches if entry.id == entry_id), None)
+                if entry is None:
+                    return CommandResult(False, error="应用名称与所选启动结果不一致，请重新搜索")
+                if not self._indexed_shortcut_unchanged(entry):
+                    return CommandResult(False, error="快捷方式已经变动，请刷新应用索引后重新确认")
+                return self.open_indexed(entry.id)
+            if len(matches) > 1:
+                return CommandResult(False, error="找到多个启动方式，请在快速搜索中选择具体应用")
+            if matches:
+                if not self._indexed_shortcut_unchanged(matches[0]):
+                    return CommandResult(False, error="快捷方式已经变动，请刷新应用索引后重新确认")
+                return self.open_indexed(matches[0].id)
         cmd = AppRegistry.find_app(app_name)
 
         if not cmd:
@@ -835,6 +863,48 @@ class CommandEngine:
                 command=f"open:{app_name}",
                 error=f"打开应用失败: {e}",
             )
+
+    @staticmethod
+    def _indexed_shortcut_unchanged(entry):
+        if not entry.target.lower().endswith(".lnk"):
+            return True
+        try:
+            status = os.stat(entry.target)
+            return entry.stamp == (status.st_mtime_ns, status.st_size)
+        except OSError:
+            return False
+
+    def open_indexed(self, entry_id: str) -> CommandResult:
+        from engine.app_index import get_app_index, shortcut_url
+        entry = get_app_index().get(entry_id)
+        if entry is None:
+            return CommandResult(False, error="搜索结果已失效，请重新搜索")
+        path = os.path.abspath(entry.target)
+        try:
+            if entry.kind == "folder":
+                if not os.path.isdir(path) and not (path.lower().endswith(".lnk") and os.path.isfile(path)):
+                    raise FileNotFoundError(path)
+            elif entry.kind == "website":
+                path = shortcut_url(path)
+                if not path:
+                    raise ValueError("网页快捷方式只支持有效的 HTTP / HTTPS 地址")
+            elif entry.kind == "app":
+                if not os.path.isfile(path) or os.path.splitext(path)[1].lower() not in (".lnk", ".exe"):
+                    raise FileNotFoundError(path)
+            else:
+                raise ValueError("不支持的搜索结果")
+            env = self._external_launch_env()
+            if entry.kind == "app" and path.lower().endswith(".exe"):
+                subprocess.Popen([path], shell=False, cwd=os.path.dirname(path), creationflags=_NO_WINDOW, env=env)
+            else:
+                explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
+                subprocess.Popen([explorer, path], shell=False, creationflags=_NO_WINDOW, env=env)
+            get_app_index().mark_used(entry.id)
+            if self.event_engine:
+                self.event_engine.record("command_execute", {"type": "open_app", "app": entry.name, "success": True})
+            return CommandResult(True, output=f"已打开: {entry.name}", command=f"open:{entry.name}")
+        except (OSError, ValueError) as error:
+            return CommandResult(False, command=f"open:{entry.name}", error=f"未能打开 {entry.name}: {error}")
 
     def execute_command(self, cmd: str, auto_confirm: bool = False,
                         force_confirm: bool = False) -> CommandResult:
