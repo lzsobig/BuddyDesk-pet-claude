@@ -7,11 +7,12 @@ sound effects toggle, clipboard monitoring, and autostart without restart.
 from __future__ import annotations
 
 import sys
+import threading
 
-from PySide6.QtCore import Qt, Signal, QRectF
+from PySide6.QtCore import Qt, Signal, QRectF, QObject
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QLineEdit, QComboBox, QCheckBox, QFileDialog, QMessageBox, QScrollArea, QWidget,
+    QLineEdit, QComboBox, QCheckBox, QFileDialog, QMessageBox, QScrollArea, QWidget, QApplication,
 )
 from PySide6.QtGui import QPainter, QColor
 
@@ -32,6 +33,20 @@ BACKEND_OPTIONS = [
 ]
 
 API_PRESETS = cfg.API_PRESETS
+
+
+class ConnectionProbe(QObject):
+    finished = Signal(int, bool, str)
+
+    def start(self, identity, settings):
+        def worker():
+            from ai.backend import probe_connection
+            try:
+                success, message = probe_connection(settings)
+            except Exception:
+                success, message = False, "测试未完成，请检查连接配置后重试。"
+            self.finished.emit(identity, success, message)
+        threading.Thread(target=worker, daemon=True).start()
 
 
 def _make_field_row(label_text: str, widget) -> QFrame:
@@ -119,6 +134,11 @@ class SettingsPanel(QDialog):
                                 | Qt.WindowType.WindowStaysOnTopHint)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._drag_pos = None
+        self._probe_generation = 0
+        self._probe_running = False
+        self._tested_connection = None
+        self._connection_probe = ConnectionProbe(QApplication.instance())
+        self._connection_probe.finished.connect(self._connection_finished)
         self._build_ui()
         self._populate()
 
@@ -243,6 +263,21 @@ class SettingsPanel(QDialog):
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;padding-top:8px;")
         form.addWidget(hint)
+        self._test_connection = QPushButton("测试连接")
+        self._test_connection.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._test_connection.setFixedHeight(34)
+        self._test_connection.setStyleSheet(f"QPushButton {{background:{BG_CARD};border:1px solid {BORDER};border-radius:8px;color:{TEXT_SECONDARY};font-size:12px;}} QPushButton:hover {{border-color:{ACCENT};color:{TEXT_PRIMARY};}}")
+        self._test_connection.setToolTip("发送一条很短的测试消息；云端服务可能计费。测试不会保存设置。")
+        self._test_connection.clicked.connect(self._start_connection_test)
+        form.addWidget(self._test_connection)
+        self._connection_status = QLabel("先测试选中的模型，再保存连接。测试不会读取文件。")
+        self._connection_status.setTextFormat(Qt.TextFormat.PlainText)
+        self._connection_status.setWordWrap(True)
+        self._connection_status.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
+        form.addWidget(self._connection_status)
+        for field in (self._apikey_input, self._baseurl_input, self._model_input):
+            field.textChanged.connect(self._invalidate_connection_test)
+        self._backend_combo.currentIndexChanged.connect(self._invalidate_connection_test)
         self._preferences_page = QFrame()
         form = QVBoxLayout(self._preferences_page)
         form.setContentsMargins(0, 0, 0, 0)
@@ -340,6 +375,40 @@ class SettingsPanel(QDialog):
         root.addWidget(card)
 
     # ── Helpers ─────────────────────────────────────────────────────
+    def _connection_values(self):
+        return {**self._config, "backend": self._backend_combo.currentData(),
+                "openai_api_key": self._apikey_input.text().strip(),
+                "openai_api_base": self._baseurl_input.text().strip(),
+                "openai_model": self._model_input.text().strip()}
+
+    def _invalidate_connection_test(self, *_):
+        self._probe_generation += 1
+        self._tested_connection = None
+        if hasattr(self, "_connection_status"):
+            self._connection_status.setText("点击测试连接，验证当前设置。")
+            self._connection_status.setStyleSheet(f"color:{TEXT_MUTED};font-size:11px;")
+
+    def _start_connection_test(self):
+        if self._probe_running:
+            return
+        self._probe_running = True
+        self._probe_generation += 1
+        self._test_connection.setEnabled(False)
+        self._test_connection.setText("正在测试…")
+        self._connection_status.setText("正在验证选中的连接，请稍候。")
+        self._connection_probe.start(self._probe_generation, self._connection_values())
+
+    def _connection_finished(self, identity, success, message):
+        self._probe_running = False
+        self._test_connection.setEnabled(True)
+        self._test_connection.setText("再次测试" if success else "重新测试")
+        if identity != self._probe_generation:
+            self._connection_status.setText("参数在测试期间发生变化，请重新测试。")
+            return
+        self._tested_connection = self._connection_values() if success else None
+        self._connection_status.setText(message)
+        self._connection_status.setStyleSheet(f"color:{GREEN if success else RED};font-size:11px;")
+
     def _select_settings_page(self, index):
         self._connection_page.setVisible(index == 0)
         self._preferences_page.setVisible(index == 1)

@@ -13,7 +13,7 @@ import math
 from PySide6.QtCore import Qt, QSize, QPointF, QRectF, QTimer, QVariantAnimation, QEasingCurve
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient
 from PySide6.QtWidgets import QWidget, QPushButton
-from theme import BG_SUBTLE, BG_CARD, TEXT_SECONDARY, ACCENT, RED
+from theme import BG_SUBTLE, BG_CARD, TEXT_SECONDARY, TEXT_MUTED, ACCENT, RED
 
 
 class WindowControlButton(QWidget):
@@ -123,6 +123,22 @@ class IslandActionButton(QPushButton):
         p.translate(20, 20)
         scale = 0.92 if self.isDown() else 1.0 + self._hover_amount * 0.025
         p.scale(scale, scale)
+        if self._kind == "attach":
+            p.setPen(Qt.PenStyle.NoPen)
+            color = QColor(BG_SUBTLE)
+            color.setAlphaF(self._hover_amount)
+            p.setBrush(color)
+            p.drawRoundedRect(QRectF(-15, -15, 30, 30), 8, 8)
+            p.setPen(QPen(QColor(ACCENT if self._hover_amount > .5 else TEXT_MUTED), 1.7,
+                         Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(QPointF(-5, 0), QPointF(5, 0))
+            p.drawLine(QPointF(0, -5), QPointF(0, 5))
+            if self.hasFocus():
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(QPen(QColor(ACCENT), 1.0))
+                p.drawRoundedRect(QRectF(-17, -17, 34, 34), 8, 8)
+            p.end()
+            return
         circle = QRectF(-17, -17, 34, 34)
         primary = self._kind == "send" and self.isEnabled()
         active = self._busy or self._recording

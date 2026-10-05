@@ -481,10 +481,71 @@ class OpenAIBackend(AIBackend):
         self._cancel_event.set()
 
     def is_available(self) -> bool:
-        return bool(self.api_key and self.api_key.strip())
+        from urllib.parse import urlparse
+        if self.api_key and self.api_key.strip():
+            return True
+        try:
+            return urlparse(self.api_base).hostname in {"localhost", "127.0.0.1", "::1"}
+        except ValueError:
+            return False
 
     def get_name(self) -> str:
         return f"OpenAI ({self.model})"
+
+
+def probe_connection(settings: dict) -> tuple[bool, str]:
+    from urllib.parse import urlparse
+    import requests
+
+    if settings.get("backend") == config.BACKEND_CLAUDE:
+        backend = create_backend(settings)
+        if isinstance(backend, ClaudeCodeBackend):
+            ready = backend.is_available()
+            return ready, "已检测到 Claude Code。登录与模型权限以实际对话为准。" if ready else "未检测到可运行的 Claude Code，请先安装并登录。"
+        try:
+            reply = backend.send_message([{"role": "user", "content": "只回复 OK。不要使用工具或读取文件。"}])
+            return bool(reply.strip()), "已收到模型回复，可以使用。" if reply.strip() else "服务没有返回文字，请检查模型。"
+        except Exception:
+            return False, "Claude 连接未成功，请检查地址、密钥和模型权限。"
+    base = str(settings.get("openai_api_base", "")).strip().rstrip("/")
+    model = str(settings.get("openai_model", "")).strip()
+    key = str(settings.get("openai_api_key", "")).strip()
+    try:
+        endpoint = urlparse(base)
+        endpoint.port
+    except ValueError:
+        return False, "服务地址格式不正确。"
+    if endpoint.scheme not in {"http", "https"} or not endpoint.hostname or endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
+        return False, "请填写完整 API 基础地址，例如 https://api.openai.com/v1。"
+    if not model:
+        return False, "请填写模型名称。"
+    if not key and endpoint.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return False, "请填写该服务的 API Key。"
+    try:
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        response = requests.post(base + "/chat/completions", headers=headers,
+                                 json={"model": model, "messages": [{"role": "user", "content": "Reply OK."}],
+                                       "stream": False, "max_tokens": 16}, timeout=(5, 15), allow_redirects=False)
+        if response.status_code != 200:
+            reason = {401: "密钥未通过验证", 403: "账号没有访问权限", 404: "地址或模型不存在",
+                      429: "服务限流或额度不足"}.get(response.status_code, "服务暂时未能完成请求")
+            return False, f"{reason}（HTTP {response.status_code}）。"
+        choices = response.json().get("choices", [])
+        message = choices[0].get("message", {}) if choices else {}
+        if not message.get("content"):
+            reasoning = message.get("reasoning_content") or message.get("reasoning")
+            if reasoning:
+                if choices[0].get("finish_reason") == "length":
+                    return True, "模型已响应，连接正常。短测试在思考阶段达到输出上限，正式对话会使用更长的输出额度。"
+                return True, "模型已响应，连接正常。此次测试只返回思考内容，可在聊天中核对完整回答。"
+            return False, "连接成功，但模型没有返回文字，请核对模型名称和接口类型。"
+        return True, f"{model} 已返回回复，可以使用。"
+    except requests.Timeout:
+        return False, "连接超时，请检查服务是否启动，或更换网络后重试。"
+    except requests.RequestException:
+        return False, "无法连接服务，请检查地址、网络或本机代理。"
+    except (ValueError, TypeError, AttributeError, IndexError):
+        return False, "返回内容不符合聊天接口格式，请确认地址包含正确的 API 路径。"
 
 
 class AnthropicDirectBackend(AIBackend):

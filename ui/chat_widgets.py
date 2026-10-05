@@ -9,11 +9,14 @@ import os
 import re
 import math
 import time
+import subprocess
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, Signal, QRectF, QTimer
+from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, Signal, QRectF, QTimer, QUrl
 from PySide6.QtGui import (
-    QColor, QPainter, QPen, QPixmap, QBrush, QPolygon, QPainterPath,
+    QColor, QPainter, QPen, QPixmap, QBrush, QPolygon, QPainterPath, QDesktopServices,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
@@ -219,6 +222,7 @@ class ChatInput(QPlainTextEdit):
         """)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setViewportMargins(0, 2, 0, 0)
         self.setFixedHeight(self.LINE_H + 8)
         self.textChanged.connect(self._auto_h)
         self.document().documentLayout().documentSizeChanged.connect(self._auto_h)
@@ -344,8 +348,8 @@ class _MessageBubble(QFrame):
             )
         self._bubble.setMaximumWidth(500)
         self._bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        self.set_text(text)  # sets initial HTML
         content.addWidget(self._bubble)
+        self.set_text(text)
 
         # Cmd tag (under bubble)
         if cmd:
@@ -439,6 +443,18 @@ class _MessageBubble(QFrame):
             self._clear_option_buttons()
             self._clear_task_cards()
             self._bubble.setText(_html_escape(text).replace("\n", "<br>"))
+        paths = local_result_files(display_text) if self._role == "ai" and not streaming else []
+        if paths != getattr(self, "_result_paths", []):
+            for widget in getattr(self, "_result_files", []):
+                self._content_layout.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+            self._result_paths = paths
+            self._result_files = []
+            for index, path in enumerate(paths):
+                widget = _LocalFileRow(path)
+                self._content_layout.insertWidget(self._content_layout.indexOf(self._bubble) + 1 + index, widget)
+                self._result_files.append(widget)
 
     def _clear_task_cards(self):
         """P3-4: 清除任务卡。"""
@@ -735,9 +751,89 @@ class _TypingBubble(QFrame):
         super().hideEvent(event)
 
 
+def local_result_files(text, limit=4):
+    candidates = re.findall(r"file:///[A-Za-z]:/[^\r\n<>\"|]*|[A-Za-z]:[\\/][^\r\n<>\"|]*", str(text)[:64000])
+    found = []
+    seen = set()
+    for candidate in candidates[:32]:
+        candidate = candidate.strip().split("`", 1)[0]
+        if candidate.startswith("file:///"):
+            parsed = urlparse(candidate)
+            if parsed.netloc:
+                continue
+            candidate = unquote(parsed.path).lstrip("/")
+        variants = [candidate, candidate.rstrip("。；，,;)] }*'"), candidate.split(" · ", 1)[0]]
+        boundaries = [match.start() for match in re.finditer(r"[，；。]|[,;]\s|\s(?:可以|请|已经|已保存|查看|打开)", candidate)]
+        variants.extend(candidate[:position].rstrip() for position in reversed(boundaries[-16:]))
+        for value in variants:
+            try:
+                path = Path(value)
+                if not path.is_absolute() or not path.exists() or path.is_symlink():
+                    continue
+                identity = str(path.resolve()).casefold()
+                if identity not in seen:
+                    seen.add(identity)
+                    found.append(str(path))
+                break
+            except (OSError, ValueError):
+                continue
+        if len(found) >= limit:
+            break
+    return found
+
+
+class _LocalFileRow(QFrame):
+    _TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".toml", ".log", ".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".css", ".xml", ".ini", ".sql"}
+    _DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".mp3", ".wav", ".mp4"}
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = Path(path)
+        self.setStyleSheet(f"QFrame {{background:{BG_SUBTLE};border:none;border-radius:7px;}}")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(9, 7, 9, 7)
+        layout.setSpacing(7)
+        name = QLabel(self.path.name or str(self.path))
+        name.setTextFormat(Qt.TextFormat.PlainText)
+        name.setWordWrap(True)
+        name.setToolTip(str(self.path))
+        name.setStyleSheet(f"color:{TEXT_SECONDARY};font-size:11px;background:transparent;")
+        layout.addWidget(name, 1)
+        if self.path.is_dir() or self.path.suffix.lower() in self._TEXT_EXTENSIONS | self._DOCUMENT_EXTENSIONS:
+            self._add_action(layout, "打开", self._open)
+        self._add_action(layout, "定位", self._reveal)
+        self._add_action(layout, "复制路径", lambda: QApplication.clipboard().setText(str(self.path)))
+
+    def _add_action(self, layout, label, callback):
+        button = QPushButton(label)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setStyleSheet(f"QPushButton {{background:transparent;border:none;padding:2px;color:{TEXT_MUTED};font-size:10px;}} QPushButton:hover {{color:{ACCENT};}}")
+        button.clicked.connect(callback)
+        layout.addWidget(button)
+
+    def _open(self):
+        if not self.path.exists():
+            self.setToolTip("文件已移动或删除。")
+            return
+        try:
+            if self.path.suffix.lower() in self._TEXT_EXTENSIONS and self.path.is_file() and os.name == "nt":
+                subprocess.Popen([os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "System32", "notepad.exe"), str(self.path)],
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path)))
+        except OSError:
+            self.setToolTip("未能打开文件，可以复制路径后手动打开。")
+
+    def _reveal(self):
+        target = self.path if self.path.is_dir() else self.path.parent
+        if target.is_dir():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+
+
 class _CommandResult(QFrame):
     def __init__(self, cmd: str, ok: bool | None, output: str = "", *, title="本机操作", state=None):
         super().__init__()
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.setObjectName("toolResultCard")
         self.setStyleSheet(f"QFrame#toolResultCard {{background:{BG_CARD};border:1px solid {BORDER_SUBTLE};border-radius:11px;}}")
         layout = QVBoxLayout(self)
@@ -757,11 +853,20 @@ class _CommandResult(QFrame):
         self._status.setStyleSheet(f"color:{TEXT_MUTED};font-size:10px;background:transparent;border:none;")
         header.addWidget(self._status)
         layout.addLayout(header)
+        self._spinner = ThinkingSpinner()
+        header.insertWidget(0, self._spinner)
         self._summary = QLabel()
         self._summary.setTextFormat(Qt.TextFormat.PlainText)
         self._summary.setWordWrap(True)
         self._summary.setStyleSheet(f"color:{TEXT_SECONDARY};font-size:11px;background:transparent;border:none;")
         layout.addWidget(self._summary)
+        self._files = QFrame()
+        self._file_layout = QVBoxLayout(self._files)
+        self._file_layout.setContentsMargins(0, 0, 0, 0)
+        self._file_layout.setSpacing(5)
+        self._files.setStyleSheet("background:transparent;border:none;")
+        self._files.hide()
+        layout.addWidget(self._files)
         controls = QHBoxLayout()
         self._expand = QPushButton("展开输出")
         self._expand.setCheckable(True)
@@ -789,6 +894,8 @@ class _CommandResult(QFrame):
     def update_result(self, ok, output, *, state=None):
         self._output = output
         pending = ok is None and state != "interrupted"
+        self._spinner.setVisible(state == "running" and pending)
+        self._mark.setVisible(state != "running" or not pending)
         label = "进行中" if state == "running" else "等待执行" if pending else "结果待确认" if state == "interrupted" else "已完成" if ok else "未完成"
         self._status.setText(label)
         self._mark.setText("○" if pending else "?" if state == "interrupted" else "✓" if ok else "×")
@@ -802,6 +909,14 @@ class _CommandResult(QFrame):
         self._body.setPlainText("\n\n".join(part for part in (self._cmd, output) if part))
         self._expand.setVisible(not pending and bool(self._cmd or output))
         self._copy.setVisible(not pending and bool(output))
+        while self._file_layout.count():
+            item = self._file_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        paths = local_result_files(output) if ok else []
+        for path in paths:
+            self._file_layout.addWidget(_LocalFileRow(path))
+        self._files.setVisible(bool(paths))
         if pending:
             self._body.hide()
             self._expand.setChecked(False)

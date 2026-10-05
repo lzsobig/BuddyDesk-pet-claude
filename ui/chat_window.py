@@ -282,19 +282,15 @@ class ChatWindow(ChatBaseWindow):
         composer = QHBoxLayout(pill)
         composer.setContentsMargins(9, 9, 9, 9)
         composer.setSpacing(4)
-        self._attach_btn = QPushButton("＋")
-        self._attach_btn.setFixedSize(30, 30)
+        from ui.icon_widgets import VoiceButton, IslandActionButton
+        self._attach_btn = IslandActionButton("attach")
         self._attach_btn.setToolTip("添加文件或文件夹")
         self._attach_btn.setAccessibleName("添加附件")
-        self._attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._attach_btn.setStyleSheet(
-            f"QPushButton {{background:transparent;color:{TEXT_MUTED};border:none;"
-            f"padding:0;font-size:20px;}}"
-            f"QPushButton:hover {{background:{BG_SUBTLE};border-radius:8px;color:{ACCENT};}}"
-        )
         attachment_menu = QMenu(self._attach_btn)
-        attachment_menu.addAction("选择文件…", self._choose_files)
-        attachment_menu.addAction("选择文件夹…", self._choose_folder)
+        attachment_menu.addAction("选择文件…    Ctrl+O", self._choose_files)
+        attachment_menu.addAction("选择文件夹…    Ctrl+Shift+O", self._choose_folder)
+        attachment_menu.addSeparator()
+        attachment_menu.addAction("截取屏幕…    Ctrl+Shift+J", self._on_capture_screen)
         self._attach_btn.clicked.connect(
             lambda: attachment_menu.exec(self._attach_btn.mapToGlobal(self._attach_btn.rect().topLeft()))
         )
@@ -304,7 +300,6 @@ class ChatWindow(ChatBaseWindow):
         self._input.send_signal.connect(self._send)
         composer.addWidget(self._input, 1)
         composer.addSpacing(8)
-        from ui.icon_widgets import VoiceButton, IslandActionButton
         self._voice_btn = VoiceButton()
         self._voice_btn.setToolTip("语音输入（Ctrl+Shift+V）")
         self._voice_btn.setAccessibleName("语音输入")
@@ -360,6 +355,9 @@ class ChatWindow(ChatBaseWindow):
         self.bridge.stream_done.connect(self._on_done)
         self.bridge.stream_error.connect(self._on_err)
         self.bridge.state_changed.connect(self._on_state)
+        QShortcut(QKeySequence("Ctrl+O"), self, activated=self._choose_files)
+        QShortcut(QKeySequence("Ctrl+Shift+O"), self, activated=self._choose_folder)
+        QShortcut(QKeySequence("Ctrl+N"), self, activated=self._add_conversation)
         # P1-2: 字号缩放快捷键
         QShortcut(QKeySequence("Ctrl+="), self, activated=self._font_scale_up)
         QShortcut(QKeySequence("Ctrl++"), self, activated=self._font_scale_up)
