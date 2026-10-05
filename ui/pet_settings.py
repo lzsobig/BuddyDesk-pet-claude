@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
-from pet_library import import_animation_pack, import_pet, pets, resolve_pet, update_thinking_image
+from pet_library import codex_pets, import_codex_pet, import_animation_pack, import_pet, pets, resolve_pet, update_thinking_image
 from theme import BG_SUBTLE, BORDER, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY
 
 
@@ -46,6 +46,11 @@ class PetSettings(QFrame):
                                 "QPushButton:disabled {color:#a9afb8;background:transparent;}")
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        self.codex_button = QPushButton("从本机 Codex 迁移宠物…")
+        self.codex_button.setFixedHeight(28)
+        self.codex_button.setStyleSheet(f"text-align:left;padding:0;border:none;background:transparent;color:{TEXT_SECONDARY};font-size:12px;")
+        self.codex_button.clicked.connect(self._import_codex)
+        layout.addWidget(self.codex_button)
         row = QHBoxLayout()
         label = QLabel("名称")
         label.setFixedWidth(54)
@@ -177,6 +182,49 @@ class PetSettings(QFrame):
         self._position = None
         self._position_reset = True
         self.hint.setText("保存后，桌面宠物会回到主屏幕右下角。")
+
+    def _import_codex(self):
+        try:
+            choices = codex_pets()
+            if not choices:
+                root = QFileDialog.getExistingDirectory(self, "选择 Codex 的 pets 目录")
+                if not root:
+                    return
+                choices = codex_pets(root)
+            if not choices:
+                QMessageBox.information(self, "没有找到本地宠物", "请选择包含宠物子目录的 pets 文件夹。支持 pet.json 与标准 PNG / WebP spritesheet；云端角色需先下载到本机。")
+                return
+            dialog = QInputDialog(self)
+            dialog.setWindowTitle("从 Codex 迁移宠物")
+            dialog.setLabelText("选择要复制到 BuddyDesk 的角色。原文件不变；抚摸、拖动和睡眠缺少对应动作时沿用待机。")
+            names = [f"{number + 1}. {pet['name']}" for number, pet in enumerate(choices)]
+            dialog.setComboBoxItems(names)
+            combo = dialog.findChild(QComboBox)
+            if combo:
+                import io
+                from PIL import Image
+                combo.setIconSize(QSize(42, 42))
+                for number, pet in enumerate(choices):
+                    with Image.open(pet["sheet"]) as sheet:
+                        preview = sheet.crop((0, 0, 192, 208))
+                        buffer = io.BytesIO()
+                        preview.save(buffer, format="PNG")
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(buffer.getvalue())
+                    combo.setItemIcon(number, QIcon(pixmap))
+                    from html import escape
+                    combo.setItemData(number, escape(pet["description"]), Qt.ItemDataRole.ToolTipRole)
+            dialog.setOkButtonText("迁移选中角色")
+            dialog.setCancelButtonText("取消")
+            if dialog.exec() != QInputDialog.DialogCode.Accepted:
+                return
+            selected = combo.currentIndex() if combo else names.index(dialog.textValue())
+            pet = import_codex_pet(choices[selected]["folder"])
+            self._reload(pet["id"])
+            self.name.setText(pet["name"])
+            self.hint.setText("已复制到 BuddyDesk，原 Codex 文件保持不变。点击保存后使用。")
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "无法迁移宠物", str(error))
 
     def values(self):
         return {"pet_id": self.selector.currentData(), "pet_name": self.name.text().strip() or "我的宠物",

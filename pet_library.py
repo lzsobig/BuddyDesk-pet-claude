@@ -36,6 +36,77 @@ def library_dir() -> Path:
     return Path(config.CONFIG_DIR) / "pets"
 
 
+def codex_pets(root: str | None = None) -> list[dict]:
+    directory = Path(root) if root else Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "pets"
+    if not directory.is_dir():
+        return []
+    found = []
+    for folder in sorted(directory.iterdir())[:128]:
+        try:
+            if not folder.is_dir() or folder.is_symlink():
+                continue
+            manifest = folder / "pet.json"
+            if manifest.is_symlink() or manifest.stat().st_size > MAX_PACK_JSON_BYTES:
+                continue
+            data = json.loads(manifest.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+            if not isinstance(data, dict):
+                continue
+            relative = _safe_relative_path(data.get("spritesheetPath", ""))
+            sheet = folder.joinpath(*relative.split("/"))
+            if sheet.is_symlink() or not sheet.resolve().is_relative_to(folder.resolve()) or sheet.stat().st_size > 20 * 1024 * 1024:
+                continue
+            if sheet.suffix.lower() not in (".png", ".webp"):
+                continue
+            with Image.open(sheet) as image:
+                if image.size not in ((1536, 1872), (1536, 2288)):
+                    continue
+            name = data.get("displayName", data.get("name", folder.name))
+            if not isinstance(name, str) or not name.strip() or any(ord(char) < 32 for char in name):
+                continue
+            description = data.get("description", "")
+            found.append({"name": name.strip()[:24], "folder": str(folder), "sheet": str(sheet),
+                          "description": description[:300] if isinstance(description, str) else ""})
+        except (OSError, ValueError, TypeError, RecursionError, Image.DecompressionBombError):
+            logger.debug("Skipped unsupported local Codex pet")
+    return found
+
+
+def import_codex_pet(folder: str) -> dict:
+    source = Path(folder)
+    choices = codex_pets(str(source.parent))
+    entry = next((pet for pet in choices if Path(pet["folder"]).resolve() == source.resolve()), None)
+    if entry is None:
+        raise ValueError("没有找到有效的本地 Codex 宠物，请选择包含 pet.json 和 spritesheet 的宠物目录")
+    rows = {"idle": (0, 6, 160), "walk": (1, 8, 100), "happy": (3, 4, 160),
+            "error": (5, 8, 150), "thinking": (7, 6, 140)}
+    with tempfile.TemporaryDirectory(prefix="codex-pet-import-") as temporary:
+        archive_path = Path(temporary) / "pet-pack.zip"
+        states = {}
+        with Image.open(entry["sheet"]) as original:
+            if original.size not in ((1536, 1872), (1536, 2288)) or not ("A" in original.getbands() or "transparency" in original.info):
+                raise ValueError("Codex 宠物必须使用受支持的透明 spritesheet")
+            sheet = original.convert("RGBA")
+            if sheet.getchannel("A").getextrema()[0] == 255:
+                raise ValueError("Codex 宠物图片没有透明背景，未进行导入")
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                import io
+                for state, (row, count, duration) in rows.items():
+                    frames = []
+                    for number in range(count):
+                        frame = sheet.crop((number * 192, row * 208, (number + 1) * 192, (row + 1) * 208))
+                        if frame.getchannel("A").getbbox() is None:
+                            raise ValueError(f"Codex 宠物 {state} 动作存在空白帧，未进行导入")
+                        buffer = io.BytesIO()
+                        frame.save(buffer, format="PNG")
+                        relative = f"{state}/{number:02}.png"
+                        archive.writestr(relative, buffer.getvalue())
+                        frames.append(relative)
+                    states[state] = {"frames": frames, "durations": [duration] * count}
+                manifest = {"format": ANIMATION_FORMAT, "name": entry["name"], "states": states}
+                archive.writestr("pet-pack.json", json.dumps(manifest, ensure_ascii=False))
+        return import_animation_pack(str(archive_path))
+
+
 def _builtins() -> list[dict]:
     assets = Path(config.ASSETS_DIR)
     return [
