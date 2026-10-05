@@ -7,6 +7,7 @@ assets directory is mapped to the ``assets`` destination here.
 """
 from pathlib import Path
 import os
+import json
 
 ROOT = Path(SPEC).parent
 assets = ROOT / "assets"
@@ -18,9 +19,17 @@ native_candidates = [
 native = Path(os.environ["BUDDYDESK_WINISLAND_EXE"]) if os.environ.get("BUDDYDESK_WINISLAND_EXE") else next((path for path in native_candidates if path.is_file()), None)
 if native is None or not native.is_file():
     raise FileNotFoundError("Build WinIsland first or set BUDDYDESK_WINISLAND_EXE to its release executable")
+animation = assets / "companion" / "animation"
+animation_manifest = animation / "pet-pack.json"
+animation_files = {animation_manifest.resolve()}
+if animation_manifest.is_file():
+    pack = json.loads(animation_manifest.read_text(encoding="utf-8"))
+    animation_files.update((animation / frame).resolve()
+                           for state in pack["states"].values() for frame in state["frames"])
 runtime_assets = [(str(path), str(Path("assets") / path.relative_to(assets).parent))
                   for path in assets.rglob("*") if path.is_file()
-                  and "motion-source" not in path.relative_to(assets).parts]
+                  and (not path.is_relative_to(animation) or path.resolve() in animation_files)
+                  and not {"motion-source", "motion72-source", "motion-release", "motion72-release"}.intersection(path.relative_to(assets).parts)]
 
 # Keep this list explicit. Recursive collection of the project packages makes
 # PyInstaller inspect unrelated packages installed in the developer's Python
@@ -37,6 +46,13 @@ hiddenimports = [
     "fitz",
     "docx",
     "openpyxl",
+    "mistune.plugins.table",
+    "mistune.plugins.formatting",
+    "mistune.plugins.task_lists",
+    "mistune.plugins.url",
+    "pypinyin",
+    "win32com.client",
+    "pythoncom",
 ]
 
 analysis = Analysis(
@@ -67,6 +83,10 @@ analysis = Analysis(
     ],
     noarchive=False,
 )
+
+analysis.binaries = [entry for entry in analysis.binaries
+                     if Path(entry[0]).name.lower() not in ("icuuc.dll", "icuin.dll", "icu.dll")
+                     and not Path(entry[0]).name.lower().startswith("icudt")]
 
 pyz = PYZ(analysis.pure)
 
